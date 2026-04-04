@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}Admin Panel{% endblock %}
+{% block head %}
+<style>
+.admin-wrap{max-width:1200px;margin:0 auto;padding:24px 16px 80px}
+.admin-header{margin-bottom:20px}
+.admin-title{font-family:'Bebas Neue',cursive;font-size:28px;letter-spacing:5px;color:var(--ac2)}
+.admin-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:2px;margin-top:3px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px}
+.stat-box{background:var(--s1);border:1px solid var(--border);padding:18px;text-align:center;border-radius:2px}
+.stat-num{font-family:'Bebas Neue',cursive;font-size:40px;color:var(--ac);letter-spacing:2px;line-height:1}
+.stat-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:2px;margin-top:4px}
+.stat-box.red .stat-num{color:var(--ac2)}
+.stat-box.cyan .stat-num{color:var(--ac3)}
+.stat-box.orange .stat-num{color:var(--ac4)}
+.stat-box.purple .stat-num{color:var(--ac5)}
+.atabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;overflow-x:auto;gap:0}
+.atab{font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;letter-spacing:1px;padding:10px 14px;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dim);cursor:pointer;white-space:nowrap;transition:.2s;}
+.atab.on{color:var(--ac2);border-bottom-color:var(--ac2);background:rgba(255,45,85,.04)}
+.atab:hover:not(.on){color:var(--bright)}
+.apanel{display:none}.apanel.on{display:block}
+.chart-wrap{height:120px;display:flex;align-items:flex-end;gap:3px;padding:10px 0}
+.chart-bar{flex:1;background:rgba(232,255,0,.3);border-top:1px solid var(--ac);border-radius:1px 1px 0 0;position:relative;min-height:2px;transition:.3s;cursor:default}
+.chart-bar:hover{background:rgba(232,255,0,.5)}
+.chart-bar[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100%+5px);left:50%;transform:translateX(-50%);background:var(--s3);border:1px solid var(--border);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:9px;padding:3px 7px;white-space:nowrap;pointer-events:none;z-index:10}
+.form-check{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx)}
+input[type=checkbox].toggle{appearance:none;width:36px;height:18px;background:var(--dim);border-radius:9px;cursor:pointer;transition:.2s;position:relative;flex-shrink:0}
+input[type=checkbox].toggle:checked{background:var(--ac)}
+input[type=checkbox].toggle::after{content:'';position:absolute;left:2px;top:2px;width:14px;height:14px;background:white;border-radius:50%;transition:.2s}
+input[type=checkbox].toggle:checked::after{left:20px}
+.filter-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.filter-input{background:var(--s2);border:1px solid var(--border);color:var(--tx);padding:6px 10px;font-family:'Share Tech Mono',monospace;font-size:10px;outline:none;border-radius:2px;width:200px}
+.filter-input:focus{border-color:var(--ac)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="admin-wrap">
+  <div class="admin-header">
+    <div class="admin-title">⚙ ADMIN PANEL</div>
+    <div class="admin-sub">LiquidationOsint — полный контроль</div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-box"><div class="stat-num">{{ stats.total_users }}</div><div class="stat-label">ВСЕГО ЮЗЕРОВ</div></div>
+    <div class="stat-box cyan"><div class="stat-num">{{ stats.total_searches }}</div><div class="stat-label">ПОИСКОВ ВСЕГО</div></div>
+    <div class="stat-box orange"><div class="stat-num">{{ stats.total_visitors }}</div><div class="stat-label">ВИЗИТОВ</div></div>
+    <div class="stat-box red"><div class="stat-num">{{ stats.today_searches }}</div><div class="stat-label">ПОИСКОВ СЕГОДНЯ</div></div>
+    <div class="stat-box purple"><div class="stat-num">{{ stats.today_visitors }}</div><div class="stat-label">ВИЗИТОВ СЕГОДНЯ</div></div>
+  </div>
+
+  <!-- CHARTS -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+    <div class="card">
+      <div class="chdr"><span class="chdr-t">📊 ПОИСКИ (14 дней)</span></div>
+      <div class="cbody">
+        <div class="chart-wrap" id="chart-searches"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chdr"><span class="chdr-t">👤 РЕГИСТРАЦИИ (14 дней)</span></div>
+      <div class="cbody">
+        <div class="chart-wrap" id="chart-users"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <div class="atabs">
+    <button class="atab on" onclick="at('a-users',this)">👥 ПОЛЬЗОВАТЕЛИ ({{ users|length }})</button>
+    <button class="atab" onclick="at('a-searches',this)">🔍 ПОИСКИ ({{ searches|length }})</button>
+    <button class="atab" onclick="at('a-visitors',this)">📡 ВИЗИТЫ ({{ visitors|length }})</button>
+    <button class="atab" onclick="at('a-top',this)">📈 СТАТИСТИКА</button>
+    <button class="atab" onclick="at('a-settings',this)">⚙ НАСТРОЙКИ</button>
+  </div>
+
+  <!-- USERS -->
+  <div class="apanel on" id="a-users">
+    <div class="filter-row">
+      <input class="filter-input" placeholder="🔍 Поиск по email/нику..." oninput="filterTable('tbl-users',this.value)">
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table class="tbl" id="tbl-users">
+        <thead><tr><th>ID</th><th>Email</th><th>Ник</th><th>Роль</th><th>Поисков</th><th>Вход</th><th>IP</th><th>Страна</th><th>Регистрация</th><th>Действия</th></tr></thead>
+        <tbody>
+        {% for u in users %}
+        <tr>
+          <td style="color:var(--dim)">{{ u.id }}</td>
+          <td style="color:var(--ac3)">{{ u.email }}</td>
+          <td style="color:var(--bright)"><b>{{ u.username }}</b></td>
+          <td>
+            <span class="badge {{ 'badge-admin' if u.role=='admin' else ('badge-banned' if u.is_banned else 'badge-user') }}">
+              {{ 'ADMIN' if u.role=='admin' else ('BANNED' if u.is_banned else 'USER') }}
+            </span>
+          </td>
+          <td style="color:var(--ac)">{{ u.login_count }}</td>
+          <td style="color:var(--dim)">{{ u.last_login[:10] if u.last_login else '—' }}</td>
+          <td style="color:var(--dim)">{{ u.ip or '—' }}</td>
+          <td style="color:var(--dim)">{{ u.country or '—' }}</td>
+          <td style="color:var(--dim)">{{ u.created_at[:10] }}</td>
+          <td>
+            {% if u.role != 'admin' %}
+            <form method="POST" action="/admin/user/{{ u.id }}/ban" style="display:inline">
+              <button class="btn btn-sm {{ 'btn-outline' if u.is_banned else 'btn-danger' }}" type="submit">
+                {{ '🔓 Разбан' if u.is_banned else '🔒 Бан' }}
+              </button>
+            </form>
+            <form method="POST" action="/admin/user/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('Удалить?')">
+              <button class="btn btn-sm btn-danger" type="submit">🗑</button>
+            </form>
+            {% else %}
+            <span style="color:var(--dim);font-size:10px;font-family:'Share Tech Mono',monospace">protected</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SEARCHES -->
+  <div class="apanel" id="a-searches">
+    <div class="filter-row">
+      <input class="filter-input" placeholder="🔍 Фильтр запросов..." oninput="filterTable('tbl-searches',this.value)">
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table class="tbl" id="tbl-searches">
+        <thead><tr><th>#</th><th>Запрос</th><th>Тип</th><th>Юзер</th><th>IP</th><th>Результатов</th><th>Дата</th></tr></thead>
+        <tbody>
+        {% for s in searches %}
+        <tr>
+          <td style="color:var(--dim)">{{ loop.index }}</td>
+          <td style="color:var(--ac)">{{ s.query }}</td>
+          <td><span class="badge badge-user">{{ (s.qtype or '?').upper() }}</span></td>
+          <td style="color:var(--ac3)">{{ s.username or s.email or 'гость' }}</td>
+          <td style="color:var(--dim)">{{ s.ip }}</td>
+          <td style="color:var(--ac3)">{{ s.results }}</td>
+          <td style="color:var(--dim)">{{ s.created_at[:16] }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- VISITORS -->
+  <div class="apanel" id="a-visitors">
+    <div class="filter-row">
+      <input class="filter-input" placeholder="🔍 Фильтр по IP/стране..." oninput="filterTable('tbl-visitors',this.value)">
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table class="tbl" id="tbl-visitors">
+        <thead><tr><th>IP</th><th>Страна</th><th>Город</th><th>ISP</th><th>Путь</th><th>Браузер</th><th>Дата</th></tr></thead>
+        <tbody>
+        {% for v in visitors %}
+        <tr>
+          <td style="color:var(--ac3)">{{ v.ip }}</td>
+          <td style="color:var(--bright)">{{ v.country or '—' }}</td>
+          <td style="color:var(--dim)">{{ v.city or '—' }}</td>
+          <td style="color:var(--dim)">{{ (v.isp or '—')[:30] }}</td>
+          <td style="color:var(--ac)">{{ v.path }}</td>
+          <td style="color:var(--dim)">{{ (v.user_agent or '')[:40] }}{% if v.user_agent and v.user_agent|length > 40 %}…{% endif %}</td>
+          <td style="color:var(--dim)">{{ v.created_at[:16] }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TOP STATS -->
+  <div class="apanel" id="a-top">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="card">
+        <div class="chdr"><span class="chdr-t">🔥 ТОП ЗАПРОСЫ</span></div>
+        <div class="cbody">
+          {% for q in stats.top_queries %}
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(15,30,48,.8);font-family:'Share Tech Mono',monospace;font-size:10px">
+            <span style="color:var(--ac)">{{ q.query }}</span>
+            <span style="color:var(--ac3)">×{{ q.c }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card">
+        <div class="chdr"><span class="chdr-t">🌐 ТОП IP</span></div>
+        <div class="cbody">
+          {% for ip in stats.top_ips %}
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(15,30,48,.8);font-family:'Share Tech Mono',monospace;font-size:10px">
+            <span style="color:var(--ac3)">{{ ip.ip }}</span>
+            <span style="color:var(--ac)">×{{ ip.c }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="apanel" id="a-settings">
+    <div class="card">
+      <div class="chdr"><span class="chdr-t">⚙ НАСТРОЙКИ САЙТА</span></div>
+      <div class="cbody">
+        <form method="POST" action="/admin/settings">
+          <div class="form-check">
+            <input type="checkbox" class="toggle" name="require_login" value="1" id="req-login" {{ 'checked' if settings.get('require_login')=='1' else '' }}>
+            <label for="req-login">Требовать логин для поиска</label>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="toggle" name="maintenance" value="1" id="maint" {{ 'checked' if settings.get('maintenance')=='1' else '' }}>
+            <label for="maint">Режим обслуживания</label>
+          </div>
+          <div class="form-group" style="margin-top:14px">
+            <label class="form-label">МАКС. ПОИСКОВ В ДЕНЬ (на пользователя)</label>
+            <input class="form-input" type="number" name="max_searches_per_day" value="{{ settings.get('max_searches_per_day','100') }}" style="width:120px">
+          </div>
+          <button class="btn btn-primary" type="submit" style="margin-top:10px">СОХРАНИТЬ</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function at(id,btn){
+  document.querySelectorAll('.apanel').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.atab').forEach(b=>b.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  btn.classList.add('on');
+}
+
+function filterTable(id, val){
+  const rows = document.querySelectorAll('#'+id+' tbody tr');
+  val = val.toLowerCase();
+  rows.forEach(r=>{
+    r.style.display = r.textContent.toLowerCase().includes(val) ? '' : 'none';
+  });
+}
+
+// Charts
+async function loadCharts(){
+  try{
+    const r = await fetch('/admin/api/stats');
+    const d = await r.json();
+    renderChart('chart-searches', d.searches_daily, 'var(--ac)');
+    renderChart('chart-users',    d.users_daily,    'var(--ac3)');
+  }catch(e){}
+}
+
+function renderChart(id, data, color){
+  const el = document.getElementById(id);
+  if(!el || !data.length) return;
+  const max = Math.max(...data.map(d=>d.count), 1);
+  el.innerHTML = data.map(d=>{
+    const h = Math.max((d.count/max)*100, 2);
+    return `<div class="chart-bar" style="height:${h}%;background:${color}33;border-top-color:${color}" title="${d.date}: ${d.count}"></div>`;
+  }).join('');
+}
+
+loadCharts();
+</script>
+{% endblock %}
