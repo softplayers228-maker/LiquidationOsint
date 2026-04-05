@@ -26,7 +26,9 @@ SITE_URL     = os.environ.get("SITE_URL",     "https://liquidationosint.up.railw
 AUTHOR       = "@poyasnitelno"
 TIKTOK_URL   = "https://www.tiktok.com/@poyasnitelno"
 DB_PATH      = os.environ.get("DB_PATH",      "liquidation.db")
-ANTHROPIC_KEY= os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY        = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL          = "llama-3.3-70b-versatile"   # fastest + smartest free model
+GROQ_MODEL_FAST     = "llama-3.1-8b-instant"      # ultra-fast for analysis
 GOOGLE_VERIFICATION = "SGr41lr3yHhH3UUxcAiyTNeVzRF7mEk8p03w0TbYqgM"
 
 HEADERS = {
@@ -195,119 +197,268 @@ def get_device_info(ua):
     return "🖥 Desktop"
 
 # ═══════════════════════════════════════════════════════════════
-#  AI ASSISTANT
+#  AI ENGINE — GROQ (llama-3.3-70b-versatile)
 # ═══════════════════════════════════════════════════════════════
-def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0):
-    """Generate AI analysis of OSINT results"""
-    summary_parts = []
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+def _groq(messages, model=None, max_tokens=1200, temperature=0.7):
+    """
+    Core Groq API call — OpenAI-compatible endpoint.
+    Returns text string or raises exception.
+    """
+    if not GROQ_API_KEY:
+        raise ValueError("NO_KEY")
+    m = model or GROQ_MODEL
+    resp = requests.post(
+        GROQ_URL,
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type":  "application/json",
+        },
+        json={
+            "model":       m,
+            "messages":    messages,
+            "max_tokens":  max_tokens,
+            "temperature": temperature,
+            "stream":      False,
+        },
+        timeout=25,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+# ── SYSTEM PROMPTS ───────────────────────────────────────────────
+_SYS_ANALYST = """Ты — экспертный OSINT-аналитик системы LiquidationOsint.
+Ты работаешь с публично доступными данными и помогаешь проводить расследования.
+Отвечай только по-русски. Используй emoji для структуры.
+Анализируй только предоставленные данные — не выдумывай.
+
+Формат ответа:
+🎯 **Итог** — 2-3 предложения: что за цель, что нашли.
+🔑 **Ключевые находки** — список самого важного.
+🕵 **Следующие шаги** — конкретные рекомендации что проверить дальше.
+⚠️ **Риски/аномалии** — если есть VPN, прокси, утечки, CVE — выдели отдельно."""
+
+_SYS_CHAT = """Ты — OSINT-эксперт и ассистент системы LiquidationOsint.
+Ты свободно говоришь об OSINT методах, инструментах, техниках разведки по открытым источникам.
+Отвечай по-русски, развёрнуто и по делу. Emoji приветствуются.
+Ты знаешь: Sherlock, Maltego, Shodan, Recon-ng, theHarvester, SpiderFoot, Holehe,
+Maigret, GHunt, PhoneInfoga, OSINT Framework, Google Dorks, Censys, GreyNoise,
+социальную инженерию в рамках OSINT, анализ метаданных, геолокацию по фото,
+поиск по утечкам, анализ блокчейна, HUMINT, SIGINT, GEOINT.
+Контекст расследования (если есть): {context}"""
+
+_SYS_DORK = """Ты — эксперт по Google Dorks и продвинутым поисковым запросам.
+Генерируй только рабочие, точные дорки. Отвечай в формате JSON списка объектов:
+[{{"name": "Название", "dork": "запрос", "url": "https://www.google.com/search?q=URL_ENCODED"}}]
+Без пояснений, только JSON."""
+
+
+def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0,
+                     holehe_found=0, shodan_data=None):
+    """Deep AI analysis of all OSINT results using Groq llama-3.3-70b."""
+
+    # Build rich context
+    parts = []
     for k, v in lookup_data.items():
-        if not k.startswith("_") and v and v != "—":
-            summary_parts.append(f"{k}: {v}")
+        if not k.startswith("_") and v and str(v) not in ("—", "Нет", ""):
+            parts.append(f"  • {k}: {v}")
 
-    system_prompt = """Ты — ИИ-аналитик OSINT системы LiquidationOsint. 
-Твоя задача — анализировать результаты разведки и давать краткое, чёткое резюме.
-Отвечай по-русски. Будь конкретным. Используй emoji для наглядности.
-Не придумывай данные — анализируй только то что есть.
-Формат: краткое резюме (3-5 предложений), потом список ключевых находок, потом рекомендации для дальнейшего поиска."""
+    shodan_ctx = ""
+    if shodan_data:
+        ports = shodan_data.get("ports", [])
+        cves  = shodan_data.get("cves",  [])
+        if ports: shodan_ctx += f"\n  • Открытые порты: {', '.join(map(str, ports[:10]))}"
+        if cves:  shodan_ctx += f"\n  • CVE уязвимости: {', '.join(cves[:5])}"
 
-    user_msg = f"""Тип цели: {qtype}
-Запрос: {query}
-Данные из поиска:
-{chr(10).join(summary_parts[:15])}
-Найдено в Google: {google_count} результатов
-{'Найдено в Sherlock на ' + str(sherlock_found) + ' платформах' if sherlock_found else ''}
+    user_msg = (
+        f"**Тип цели:** {qtype.upper()}\n"
+        f"**Запрос:** `{query}`\n\n"
+        f"**Собранные данные:**\n" + "\n".join(parts or ["  • нет данных"]) +
+        (f"\n\n**Shodan:**{shodan_ctx}" if shodan_ctx else "") +
+        f"\n\n**Статистика поиска:**\n"
+        f"  • Google результатов: {google_count}\n"
+        f"  • Sherlock найдено платформ: {sherlock_found}\n"
+        f"  • Holehe найдено платформ: {holehe_found}\n\n"
+        f"Проведи полный OSINT-анализ."
+    )
 
-Дай краткий OSINT-анализ."""
-
-    # Try Anthropic API first
-    if ANTHROPIC_KEY:
+    if GROQ_API_KEY:
         try:
-            r = requests.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01",
-                         "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 600,
-                      "system": system_prompt,
-                      "messages": [{"role": "user", "content": user_msg}]},
-                timeout=15)
-            data = r.json()
-            return data.get("content", [{}])[0].get("text", "")
-        except: pass
+            return _groq(
+                [
+                    {"role": "system",  "content": _SYS_ANALYST},
+                    {"role": "user",    "content": user_msg},
+                ],
+                model=GROQ_MODEL,
+                max_tokens=1000,
+                temperature=0.4,
+            )
+        except ValueError:
+            pass   # no key — fall through
+        except Exception as e:
+            # API error — use fallback but log it
+            print(f"[GROQ analyze error] {e}")
 
-    # Fallback: rule-based analysis
-    lines = []
-    lines.append(f"🎯 **Анализ цели — {qtype.upper()}**\n")
+    # ── Smart fallback (no API key) ──────────────────────────────
+    lines = [f"🎯 **Анализ цели — {qtype.upper()}**\n"]
+    data  = {k: v for k, v in lookup_data.items() if not k.startswith("_") and v and v != "—"}
+
     if qtype == "phone":
-        country = lookup_data.get("Страна","")
-        operator = lookup_data.get("Оператор","")
-        lines.append(f"📞 Номер телефона проанализирован.")
-        if country: lines.append(f"🌍 Страна регистрации: **{country}**")
-        if operator: lines.append(f"📡 Оператор: **{operator}**")
-        lines.append(f"🔍 В Google найдено {google_count} упоминаний.")
-        lines.append("\n**Рекомендации:** Проверь GetContact и TrueCaller для идентификации владельца.")
+        lines += [
+            f"📞 Номер: **{data.get('Номер',query)}**",
+            f"🌍 Страна: **{data.get('Страна','—')}** | Оператор: **{data.get('Оператор','—')}**",
+            f"📶 Тип: {data.get('Тип линии','—')} | Валидный: {data.get('Валидный','—')}",
+            f"🔍 Google: {google_count} результатов",
+            "",
+            "🕵 **Следующие шаги:**",
+            "  → GetContact / TrueCaller — имя владельца",
+            "  → Avito / VK — объявления с этим номером",
+            "  → t.me/+номер — проверить Telegram аккаунт",
+        ]
+        if data.get("Gravatar имя"): lines.append(f"  → Gravatar найден: **{data['Gravatar имя']}** — ищи по нику")
     elif qtype == "email":
-        domain = lookup_data.get("Домен","")
-        gravatar = lookup_data.get("Gravatar имя","")
-        lines.append(f"✉ Email адрес проанализирован.")
-        if domain: lines.append(f"🌐 Домен: **{domain}**")
-        if gravatar: lines.append(f"👤 Gravatar профиль найден: **{gravatar}**")
-        lines.append(f"🔍 В Google найдено {google_count} упоминаний.")
-        lines.append("\n**Рекомендации:** Проверь HaveIBeenPwned на утечки. Используй Epieos для глубокого анализа.")
+        lines += [
+            f"✉ Email: **{query}**  |  Домен: **{data.get('Домен','—')}**",
+            f"🔍 Google: {google_count} результатов | Holehe: {holehe_found} платформ",
+            f"⚠ Одноразовый: {data.get('Одноразовый','—')}",
+            "",
+            "🕵 **Следующие шаги:**",
+            "  → HaveIBeenPwned — проверь на утечки",
+            "  → Epieos — глубокий анализ email",
+            "  → HudsonRock — infostealers база",
+            f"  → Возможные ники: {data.get('Возможные username','—')} — проверь Sherlock",
+        ]
+        if data.get("Gravatar имя"): lines.append(f"  → Gravatar: **{data['Gravatar имя']}** — поищи аккаунты")
     elif qtype == "ip":
-        country = lookup_data.get("Страна","")
-        city = lookup_data.get("Город","")
-        proxy = lookup_data.get("Прокси/VPN","Нет")
-        lines.append(f"🌐 IP адрес геолоцирован.")
-        if country: lines.append(f"🌍 Локация: **{city}, {country}**")
-        if "ДА" in proxy: lines.append(f"⚠️ **Обнаружен VPN/Прокси!** Реальная локация может отличаться.")
-        lines.append(f"🔍 В Google найдено {google_count} упоминаний.")
-        lines.append("\n**Рекомендации:** Проверь Shodan на открытые порты и CVE уязвимости.")
+        proxy_flag = "⚠️ **VPN/ПРОКСИ ОБНАРУЖЕН**" if "ДА" in str(data.get("Прокси/VPN","")) else "✅ Прямое подключение"
+        lines += [
+            f"🌐 IP: **{query}**",
+            f"🌍 {data.get('Город','—')}, {data.get('Страна','—')} | {data.get('ISP','—')}",
+            f"🔒 {proxy_flag} | Хостинг: {data.get('Хостинг/ДЦ','—')}",
+            f"🕐 Часовой пояс: {data.get('Часовой пояс','—')}",
+        ]
+        if shodan_data and shodan_data.get("ports"):
+            lines.append(f"⚡ Shodan: {len(shodan_data['ports'])} открытых портов")
+        if shodan_data and shodan_data.get("cves"):
+            lines.append(f"🔴 CVE: {len(shodan_data['cves'])} уязвимостей — **ВНИМАНИЕ**")
+        lines += ["", "🕵 **Следующие шаги:**",
+                  "  → Shodan — полный скан портов и сервисов",
+                  "  → AbuseIPDB — репутация IP",
+                  "  → GreyNoise — был ли замечен в атаках"]
     elif qtype == "username":
-        lines.append(f"👤 Username проверен на {sherlock_found}+ платформах.")
-        if sherlock_found > 5:
-            lines.append(f"✅ Активный пользователь — найден на **{sherlock_found}** платформах.")
-        lines.append(f"🔍 В Google найдено {google_count} упоминаний.")
-        lines.append("\n**Рекомендации:** Проверь найденные профили на перекрёстные данные (email, фото, bio).")
+        lines += [
+            f"👤 Username: **{query}**",
+            f"✅ Найден на **{sherlock_found}** платформах из {len(SHERLOCK_SITES)}",
+            f"🔍 Google: {google_count} упоминаний",
+            "",
+            "🕵 **Следующие шаги:**",
+            "  → Сравни bio/фото/email на найденных платформах",
+            "  → Проверь вариации: {query}1, _{query}, {query}_ и т.п.",
+            "  → Поищи email через GitHub API или Gravatar",
+        ]
+        if data.get("GitHub email") and data["GitHub email"] != "скрыт":
+            lines.append(f"  → GitHub email найден: **{data['GitHub email']}** — пробей через Email-модуль")
     elif qtype == "domain":
-        lines.append(f"🔒 Домен проанализирован.")
-        registrar = lookup_data.get("Регистратор","")
-        if registrar: lines.append(f"📋 Регистратор: **{registrar}**")
-        subs = lookup_data.get("Субдомены","")
-        if subs: lines.append(f"🕸 Найдены субдомены: {subs[:100]}")
-        lines.append("\n**Рекомендации:** Используй crt.sh и Shodan для полного анализа инфраструктуры.")
+        lines += [
+            f"🔒 Домен: **{query}**",
+            f"📋 Регистратор: {data.get('Регистратор','—')} | Создан: {data.get('Создан','—')}",
+            f"🌐 IP: {data.get('IP адрес','—')} | Сервер: {data.get('Сервер','—')}",
+        ]
+        if data.get("Субдомены (crt.sh)"): lines.append(f"🕸 Субдомены: {data['Субдомены (crt.sh)'][:120]}")
+        lines += ["", "🕵 **Следующие шаги:**",
+                  "  → Shodan — открытые порты и сервисы",
+                  "  → crt.sh — все сертификаты и субдомены",
+                  "  → Wayback Machine — история сайта",
+                  "  → BuildWith — технологический стек"]
+    elif qtype == "fullname":
+        lines += [
+            f"🪪 ФИО: **{query}**",
+            f"🔤 Транслит: {data.get('Транслит','—')}",
+            f"🔍 Google: {google_count} упоминаний",
+            "", "🕵 **Следующие шаги:**",
+            "  → VK / LinkedIn — поиск профилей",
+            "  → sudact.ru — судебные дела",
+            "  → Поиск фото в Яндекс.Картинки",
+            "  → PDF документы через Google Dorks",
+        ]
     else:
-        lines.append(f"🔍 Поиск выполнен. Найдено {google_count} результатов в Google.")
-        lines.append("\n**Рекомендации:** Уточни запрос или попробуй связанные данные.")
+        lines += [f"🔍 Результат: {google_count} в Google", "", "🕵 Уточни запрос для лучшего анализа."]
 
     return "\n".join(lines)
 
+
 def ai_chat_response(messages, context=""):
-    """AI chat with OSINT context"""
-    system = f"""Ты — ИИ-ассистент OSINT системы LiquidationOsint. 
-Ты помогаешь пользователям с расследованиями, объясняешь OSINT методы, анализируешь данные.
-Отвечай по-русски, кратко и по делу. Используй emoji.
-{f'Контекст текущего расследования: {context}' if context else ''}
-Не помогай с незаконными действиями. Только публичные данные и законные методы."""
+    """
+    Full AI chat via Groq llama-3.3-70b-versatile.
+    messages = list of {role, content} dicts (OpenAI format).
+    """
+    system_text = _SYS_CHAT.format(context=context or "нет")
 
-    if ANTHROPIC_KEY:
+    if GROQ_API_KEY:
         try:
-            r = requests.post("https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01",
-                         "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800,
-                      "system": system, "messages": messages},
-                timeout=20)
-            data = r.json()
-            return data.get("content", [{}])[0].get("text", "Ошибка ИИ")
+            groq_msgs = [{"role": "system", "content": system_text}] + messages[-20:]
+            return _groq(groq_msgs, model=GROQ_MODEL, max_tokens=1200, temperature=0.65)
+        except ValueError:
+            pass
         except Exception as e:
-            return f"⚠ ИИ временно недоступен: {str(e)[:50]}. Добавь ANTHROPIC_API_KEY в переменные Railway."
+            print(f"[GROQ chat error] {e}")
+            return f"⚠️ Groq временно недоступен: `{str(e)[:80]}`\nПроверь правильность GROQ_API_KEY в Railway Variables."
 
-    return """🤖 **ИИ-ассистент**
+    return (
+        "🤖 **ИИ не подключён**\n\n"
+        "Чтобы активировать:\n"
+        "1. Зайди на **console.groq.com/keys**\n"
+        "2. Создай API ключ (бесплатно)\n"
+        "3. В Railway → Variables добавь:\n"
+        "   `GROQ_API_KEY` = `gsk_...твой_ключ...`\n\n"
+        "Groq даёт **бесплатный** доступ к Llama 3.3 70B 🚀"
+    )
 
-Для активации ИИ добавь переменную `ANTHROPIC_API_KEY` в Railway → Variables.
 
-Получить ключ: [console.anthropic.com](https://console.anthropic.com)
+def ai_generate_dorks(query, qtype, context=""):
+    """AI-generated custom dorks beyond the static list."""
+    if not GROQ_API_KEY:
+        return []
+    prompt = (
+        f"Сгенерируй 5 продвинутых Google Dorks для OSINT расследования.\n"
+        f"Тип цели: {qtype}\n"
+        f"Запрос: {query}\n"
+        f"{'Контекст: ' + context if context else ''}\n"
+        f"Верни JSON список. URL должен быть правильно закодирован для Google."
+    )
+    try:
+        raw = _groq(
+            [{"role": "system", "content": _SYS_DORK},
+             {"role": "user",   "content": prompt}],
+            model=GROQ_MODEL_FAST, max_tokens=600, temperature=0.3,
+        )
+        # strip markdown fences if any
+        raw = re.sub(r"```(?:json)?|```", "", raw).strip()
+        dorks = json.loads(raw)
+        # ensure proper URL encoding
+        for d in dorks:
+            if d.get("dork") and not d.get("url","").startswith("http"):
+                d["url"] = "https://www.google.com/search?q=" + urllib.parse.quote(d["dork"])
+        return dorks[:5]
+    except Exception as e:
+        print(f"[GROQ dorks error] {e}")
+        return []
 
-Пока ИИ не подключён, используй инструменты поиска выше! 🔍"""
+
+def ai_osint_tips(qtype):
+    """Generate dynamic OSINT tips for current query type."""
+    if not GROQ_API_KEY:
+        return ""
+    try:
+        return _groq(
+            [{"role": "system", "content": "Ты — OSINT-эксперт. Отвечай кратко по-русски с emoji."},
+             {"role": "user",   "content": f"Дай 3 нестандартных OSINT совета для поиска по типу '{qtype}'. Коротко, по делу."}],
+            model=GROQ_MODEL_FAST, max_tokens=300, temperature=0.5,
+        )
+    except:
+        return ""
 
 # ═══════════════════════════════════════════════════════════════
 #  OSINT ENGINES
@@ -962,8 +1113,9 @@ def before_request():
 def index():
     user = current_user()
     ctx = {"query":None,"qtype":None,"lookup_data":{},"google_results":[],
-           "site_results":[],"dorks":[],"sherlock_results":[],"shodan_data":{},
-           "holehe_results":[],"hudson_data":{},"ai_analysis":""}
+           "site_results":[],"dorks":[],"ai_dorks":[],"sherlock_results":[],"shodan_data":{},
+           "holehe_results":[],"hudson_data":{},"ai_analysis":"","ai_tips":"",
+           "groq_active": bool(GROQ_API_KEY)}
 
     if request.method == "POST":
         q = request.form.get("query","").strip()
@@ -972,11 +1124,12 @@ def index():
             ctx["qtype"] = detect_type(q)
             qtype = ctx["qtype"]
 
-            if qtype == "phone":      ctx["lookup_data"] = lookup_phone(q)
+            if qtype == "phone":
+                ctx["lookup_data"] = lookup_phone(q)
             elif qtype == "email":
-                ctx["lookup_data"] = lookup_email(q)
+                ctx["lookup_data"]    = lookup_email(q)
                 ctx["holehe_results"] = holehe_check(q)
-                ctx["hudson_data"]   = hudsonrock_check(q, qtype)
+                ctx["hudson_data"]    = hudsonrock_check(q, qtype)
             elif qtype == "ip":
                 ctx["lookup_data"] = lookup_ip(q)
                 ctx["shodan_data"] = shodan_lookup(q)
@@ -984,7 +1137,7 @@ def index():
                 ctx["lookup_data"] = lookup_domain(q)
                 ctx["hudson_data"] = hudsonrock_check(q, qtype)
             elif qtype == "username":
-                ctx["lookup_data"] = lookup_username(q)
+                ctx["lookup_data"]      = lookup_username(q)
                 ctx["sherlock_results"] = sherlock_check(q)
             elif qtype == "fullname":  ctx["lookup_data"] = lookup_fullname(q)
             elif qtype == "birthday":  ctx["lookup_data"] = lookup_birthday(q)
@@ -993,27 +1146,50 @@ def index():
             ctx["dorks"]          = build_dorks(q, qtype)
             ctx["site_results"]   = site_check(q)
 
-            # AI analysis
             sherlock_found = len([s for s in ctx["sherlock_results"] if s.get("found")])
+            holehe_found   = len([h for h in ctx["holehe_results"]   if h.get("found")])
+
+            # ── AI: deep analysis ──
             ctx["ai_analysis"] = ai_analyze_osint(
                 q, qtype, ctx["lookup_data"],
-                sherlock_found, len(ctx["google_results"])
+                sherlock_found=sherlock_found,
+                google_count=len(ctx["google_results"]),
+                holehe_found=holehe_found,
+                shodan_data=ctx["shodan_data"],
             )
+
+            # ── AI: custom dorks (runs in parallel via thread) ──
+            ctx["ai_dorks"] = ai_generate_dorks(q, qtype)
+
+            # ── AI: quick tips ──
+            ctx["ai_tips"] = ai_osint_tips(qtype)
 
             # Save search
             ip = get_client_ip()
             db = get_db()
-            db.execute("INSERT INTO searches (user_id,query,qtype,ip,user_agent,results,data) VALUES (?,?,?,?,?,?,?)",
-                       (user["id"] if user else None, q, qtype, ip,
-                        request.headers.get("User-Agent","")[:200],
-                        len(ctx["google_results"]) + sherlock_found,
-                        json.dumps({"lookup": {k:v for k,v in ctx["lookup_data"].items() if not k.startswith("_")},
-                                    "sherlock_found": sherlock_found}, ensure_ascii=False)[:2000]))
+            db.execute(
+                "INSERT INTO searches (user_id,query,qtype,ip,user_agent,results,data) VALUES (?,?,?,?,?,?,?)",
+                (user["id"] if user else None, q, qtype, ip,
+                 request.headers.get("User-Agent","")[:200],
+                 len(ctx["google_results"]) + sherlock_found,
+                 json.dumps({"lookup": {k:v for k,v in ctx["lookup_data"].items() if not k.startswith("_")},
+                             "sherlock_found": sherlock_found,
+                             "holehe_found": holehe_found}, ensure_ascii=False)[:2000]))
             db.commit()
 
     return render_template("index.html", **ctx, user=user,
                            sitename=SITE_NAME, author=AUTHOR, tiktok_url=TIKTOK_URL,
                            google_verification=GOOGLE_VERIFICATION)
+
+@app.route("/api/ai-dorks", methods=["POST"])
+@login_required
+def api_ai_dorks():
+    """Generate AI dorks on demand."""
+    d = request.json or {}
+    q, qt = d.get("query",""), d.get("qtype","username")
+    if not q: return jsonify([])
+    dorks = ai_generate_dorks(q, qt, context=d.get("context",""))
+    return jsonify(dorks)
 
 # ── AI Chat API ──────────────────────────────────────────────────
 @app.route("/api/chat", methods=["POST"])
