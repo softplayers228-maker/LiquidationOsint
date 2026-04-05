@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+{% block title %}{{ sitename }} — OSINT Поиск{% endblock %}
+{% block head %}
+<style>
+.hero{text-align:center;padding:44px 20px 20px;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:600px;height:2px;background:linear-gradient(90deg,transparent,var(--ac),transparent);box-shadow:0 0 40px 4px rgba(232,255,0,.3)}
+.hero-title{font-family:'Bebas Neue',cursive;font-size:clamp(30px,7vw,70px);letter-spacing:8px;color:var(--ac);text-shadow:0 0 60px rgba(232,255,0,.4),0 2px 0 rgba(0,0,0,.5);line-height:.95;margin-bottom:5px}
+.hero-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:3px;margin-bottom:16px}
+.htag{font-family:'Share Tech Mono',monospace;font-size:9px;border:1px solid var(--border);color:var(--dim);padding:3px 10px;border-radius:1px;letter-spacing:1px;cursor:default;transition:.3s}
+.htag.on{border-color:var(--ac);color:var(--ac);background:rgba(232,255,0,.07);box-shadow:0 0 12px rgba(232,255,0,.15)}
+.sw{max-width:720px;margin:24px auto;padding:0 16px}
+.sbox{background:var(--s1);border:1px solid var(--border);border-radius:2px;overflow:hidden;transition:.3s;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+.sbox:focus-within{border-color:rgba(232,255,0,.35);box-shadow:0 0 0 1px rgba(232,255,0,.1),0 10px 40px rgba(0,0,0,.5)}
+.srow{display:flex}
+.sico{padding:0 16px;display:flex;align-items:center;font-size:18px;background:var(--s2);border-right:1px solid var(--border);flex-shrink:0}
+.sinput{flex:1;background:transparent;border:none;outline:none;padding:16px;font-family:'Share Tech Mono',monospace;font-size:13px;color:var(--ac);min-width:0;caret-color:var(--ac)}
+.sinput::placeholder{color:#1e3248}
+.sbtn{background:var(--ac);border:none;padding:0 22px;color:var(--bg);font-family:'Bebas Neue',cursive;font-size:15px;letter-spacing:3px;cursor:pointer;transition:.2s;flex-shrink:0}
+.sbtn:hover{background:#fff}
+.hint{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);border:1px solid var(--border);padding:3px 10px;border-radius:1px;cursor:pointer;transition:.2s}
+.hint:hover{border-color:var(--ac);color:var(--ac);background:rgba(232,255,0,.04)}
+.content{max-width:1060px;margin:0 auto;padding:0 16px 120px}
+.target{background:var(--s1);border:1px solid var(--border);border-left:3px solid var(--ac);padding:13px 18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.tval{font-family:'Share Tech Mono',monospace;font-size:15px;color:var(--ac)}
+.tlabel{font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:3px;color:var(--dim);margin-bottom:2px}
+.tbadge{margin-left:auto;font-family:'Bebas Neue',cursive;font-size:13px;letter-spacing:3px;background:rgba(232,255,0,.08);border:1px solid rgba(232,255,0,.25);color:var(--ac);padding:4px 14px}
+.stabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:14px;overflow-x:auto}
+.stab{font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;letter-spacing:1px;padding:11px 14px;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dim);cursor:pointer;white-space:nowrap;transition:.2s}
+.stab.on{color:var(--ac);border-bottom-color:var(--ac);background:rgba(232,255,0,.04)}
+.stab:hover:not(.on){color:var(--bright)}
+.panel{display:none}.panel.on{display:block}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.full{grid-column:1/-1}
+.dr{display:flex;justify-content:space-between;align-items:flex-start;padding:5px 0;border-bottom:1px solid rgba(15,30,48,.8);gap:10px}
+.dr:last-child{border-bottom:none}
+.dk{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);white-space:nowrap;min-width:130px;flex-shrink:0}
+.dv{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--tx);text-align:right;word-break:break-all}
+.dv.warn{color:var(--ac2)}.dv.ok{color:#00ff88}.dv.hi{color:var(--ac)}.dv.pu{color:var(--ac5)}
+.dv img.ava{width:44px;height:44px;border-radius:2px;border:1px solid var(--ac);display:block;margin-left:auto}
+.term{background:#01030a;border:1px solid var(--border);padding:12px 14px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--ac3);line-height:2;max-height:200px;overflow-y:auto}
+.t-d{color:#1e3248}.t-w{color:var(--tx)}.t-p{color:var(--ac5)}.t-g{color:#00ff88}
+.shgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:5px}
+.shitem{background:var(--s2);border:1px solid var(--border);padding:8px 10px;border-radius:1px;text-decoration:none;display:flex;align-items:center;gap:8px;transition:.2s}
+.shitem.found{border-color:rgba(0,255,136,.35);background:rgba(0,255,136,.04)}
+.shitem.found:hover{background:rgba(0,255,136,.1)}
+.shitem.notfound{opacity:.3}.shitem.err{opacity:.15}
+.sh-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.found .sh-dot{background:#00ff88;box-shadow:0 0 8px #00ff88}
+.notfound .sh-dot{background:var(--dim)}.err .sh-dot{background:var(--ac4)}
+.sh-name{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--bright)}
+.dork-list{display:flex;flex-direction:column;gap:5px}
+.dork-item{background:var(--s2);border:1px solid var(--border);padding:9px 12px;border-radius:1px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dork-name{font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:1px;color:var(--ac5);min-width:140px;flex-shrink:0}
+.dork-q{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);flex:1;word-break:break-all}
+.dork-go{font-family:'Bebas Neue',cursive;font-size:13px;letter-spacing:2px;color:var(--ac);border:1px solid rgba(232,255,0,.25);padding:4px 12px;text-decoration:none;white-space:nowrap;border-radius:1px;transition:.2s}
+.dork-go:hover{background:var(--ac);color:var(--bg)}
+.gres{padding:9px 0;border-bottom:1px solid rgba(15,30,48,.8)}
+.gres:last-child{border-bottom:none}
+.gres-title{font-size:13px;color:var(--ac3);margin-bottom:2px;font-weight:600}
+.gres-title a{color:inherit;text-decoration:none}.gres-title a:hover{text-decoration:underline}
+.gres-url{font-family:'Share Tech Mono',monospace;font-size:9px;color:#00ff88;margin-bottom:3px;word-break:break-all}
+.gres-snip{font-size:11px;color:var(--dim);line-height:1.6}
+.lgrid{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0}
+.lnk{display:inline-flex;align-items:center;gap:5px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--ac3);border:1px solid rgba(0,229,255,.2);padding:5px 12px;text-decoration:none;border-radius:1px;transition:.2s;background:rgba(0,229,255,.03)}
+.lnk:hover{background:var(--ac3);color:var(--bg)}
+.lnk.hl{color:var(--ac);border-color:rgba(232,255,0,.25);background:rgba(232,255,0,.03)}.lnk.hl:hover{background:var(--ac);color:var(--bg)}
+.mapbtn{display:inline-flex;align-items:center;gap:7px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--ac4);border:1px solid rgba(255,140,0,.3);padding:7px 14px;text-decoration:none;border-radius:1px;background:rgba(255,140,0,.05);transition:.2s;margin-top:10px}
+.mapbtn:hover{background:var(--ac4);color:var(--bg)}
+.port-list{display:flex;flex-wrap:wrap;gap:5px;padding:3px 0}
+.port{font-family:'Share Tech Mono',monospace;font-size:10px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--ac3);padding:2px 10px;border-radius:1px}
+.cve-tag{font-family:'Share Tech Mono',monospace;font-size:9px;background:rgba(255,45,85,.08);border:1px solid rgba(255,45,85,.3);color:var(--ac2);padding:2px 9px;border-radius:1px;text-decoration:none;display:inline-block;transition:.2s}
+.cve-tag:hover{background:var(--ac2);color:#fff}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}
+.sitem{background:var(--s2);border:1px solid var(--border);padding:10px 6px;text-align:center;border-radius:1px;text-decoration:none;transition:.25s;display:block}
+.sitem:hover{border-color:var(--ac);background:rgba(232,255,0,.05);transform:translateY(-1px)}
+.sname{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--bright);margin-top:5px;display:block}
+.sfound{color:#00ff88;font-family:'Share Tech Mono',monospace;font-size:9px;margin-top:2px;display:block}
+.snot{color:var(--dim);font-family:'Share Tech Mono',monospace;font-size:9px;margin-top:2px;display:block}
+.serr{color:var(--ac4);font-family:'Share Tech Mono',monospace;font-size:9px;margin-top:2px;display:block}
+.stat-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.sp{font-family:'Share Tech Mono',monospace;font-size:10px;padding:5px 12px;border-radius:1px;border:1px solid;display:flex;align-items:center;gap:5px}
+.sp.g{color:#00ff88;border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.05)}
+.sp.r{color:var(--ac2);border-color:rgba(255,45,85,.3);background:rgba(255,45,85,.05)}
+.sp.y{color:var(--ac4);border-color:rgba(255,140,0,.3);background:rgba(255,140,0,.05)}
+.sp.b{color:var(--ac3);border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.05)}
+
+/* ── AI BOX ── */
+.ai-box{background:linear-gradient(135deg,rgba(176,66,255,.08),rgba(0,229,255,.05));border:1px solid rgba(176,66,255,.3);border-radius:2px;overflow:hidden}
+.ai-hdr{padding:12px 16px;border-bottom:1px solid rgba(176,66,255,.2);display:flex;align-items:center;gap:8px}
+.ai-hdr-title{font-family:'Bebas Neue',cursive;font-size:16px;letter-spacing:3px;color:var(--ac5)}
+.ai-pulse{width:8px;height:8px;background:var(--ac5);border-radius:50%;box-shadow:0 0 12px var(--ac5);animation:blink 1s step-end infinite}
+.ai-content{padding:14px 16px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx);line-height:1.8;white-space:pre-wrap;word-break:break-word;max-height:280px;overflow-y:auto}
+.ai-content b, .ai-content strong{color:var(--ac)}
+
+/* ── AI CHAT FLOATING ── */
+.ai-chat-btn{position:fixed;bottom:24px;right:24px;z-index:500;background:var(--ac5);border:none;border-radius:50%;width:52px;height:52px;cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(176,66,255,.4);transition:.3s}
+.ai-chat-btn:hover{transform:scale(1.1);box-shadow:0 6px 30px rgba(176,66,255,.6)}
+.ai-chat-panel{position:fixed;bottom:88px;right:24px;z-index:500;width:340px;max-width:calc(100vw - 32px);background:var(--s1);border:1px solid rgba(176,66,255,.4);border-radius:4px;box-shadow:0 20px 60px rgba(0,0,0,.6);display:none;flex-direction:column;max-height:500px}
+.ai-chat-panel.open{display:flex}
+.ai-chat-hdr{padding:12px 14px;border-bottom:1px solid rgba(176,66,255,.2);display:flex;align-items:center;gap:8px;background:rgba(176,66,255,.08)}
+.ai-chat-hdr-t{font-family:'Bebas Neue',cursive;font-size:15px;letter-spacing:2px;color:var(--ac5);flex:1}
+.ai-chat-close{background:none;border:none;color:var(--dim);cursor:pointer;font-size:16px;padding:2px 6px}
+.ai-chat-close:hover{color:var(--ac2)}
+.ai-chat-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:200px}
+.ai-msg{padding:8px 11px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:10px;line-height:1.7;max-width:90%;word-break:break-word}
+.ai-msg.user{background:rgba(232,255,0,.08);border:1px solid rgba(232,255,0,.2);color:var(--ac);align-self:flex-end}
+.ai-msg.bot{background:rgba(176,66,255,.08);border:1px solid rgba(176,66,255,.2);color:var(--tx);align-self:flex-start}
+.ai-msg.bot b{color:var(--ac5)}
+.ai-chat-input-row{display:flex;border-top:1px solid rgba(176,66,255,.2);padding:8px}
+.ai-chat-input{flex:1;background:transparent;border:none;outline:none;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--ac);caret-color:var(--ac5)}
+.ai-chat-input::placeholder{color:var(--dim)}
+.ai-chat-send{background:var(--ac5);border:none;color:#fff;padding:4px 12px;font-family:'Bebas Neue',cursive;font-size:13px;letter-spacing:1px;cursor:pointer;border-radius:1px;transition:.2s}
+.ai-chat-send:hover{background:#cc66ff}
+
+/* Holehe */
+.holehe-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
+.holehe-item{background:var(--s2);border:1px solid var(--border);padding:9px 12px;border-radius:1px;display:flex;align-items:center;gap:8px}
+.holehe-item.found{border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.04)}
+.holehe-item.notfound{opacity:.4}
+.holehe-item.unknown{opacity:.6}
+.holehe-name{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--bright)}
+.holehe-detail{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-top:2px}
+
+/* Hudson Rock */
+.hudson-box{background:rgba(255,45,85,.06);border:1px solid rgba(255,45,85,.3);padding:14px;border-radius:2px;font-family:'Share Tech Mono',monospace}
+.hudson-num{font-family:'Bebas Neue',cursive;font-size:32px;color:var(--ac2);letter-spacing:2px}
+
+/* EMPTY */
+.empty{text-align:center;padding:60px 20px}
+.empty-art{font-family:'Share Tech Mono',monospace;color:var(--dim);font-size:11px;line-height:1.9;margin-bottom:20px}
+.empty-title{font-family:'Bebas Neue',cursive;font-size:24px;color:var(--ac);letter-spacing:6px;margin-bottom:8px}
+.empty-sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--dim)}
+.modules{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px;margin:20px 0}
+.mod-card{background:var(--s1);border:1px solid var(--border);padding:14px;border-top:2px solid var(--ac);transition:.2s}
+.mod-card:hover{background:var(--s2);border-top-color:var(--ac3)}
+.mod-icon{font-size:22px;margin-bottom:6px}
+.mod-name{font-family:'Bebas Neue',cursive;font-size:16px;letter-spacing:3px;color:var(--ac);margin-bottom:4px}
+.mod-desc{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);line-height:1.6}
+</style>
+{% endblock %}
+{% block content %}
+<div class="hero">
+  <div class="hero-title">LiquidationOsint</div>
+  <div class="hero-sub">WHOIS · DNS · SHODAN · SHERLOCK 65+ · HOLEHE · HUDSON ROCK · GEOIP · AI</div>
+  <div style="display:flex;justify-content:center;gap:6px;flex-wrap:wrap">
+    <span class="htag {% if qtype=='phone' %}on{% endif %}">📞 PHONE</span>
+    <span class="htag {% if qtype=='email' %}on{% endif %}">✉ EMAIL</span>
+    <span class="htag {% if qtype=='ip' %}on{% endif %}">🌐 IP+SHODAN</span>
+    <span class="htag {% if qtype=='username' %}on{% endif %}">👤 SHERLOCK 65+</span>
+    <span class="htag {% if qtype=='fullname' %}on{% endif %}">🪪 ФИО</span>
+    <span class="htag {% if qtype=='birthday' %}on{% endif %}">🎂 BIRTHDAY</span>
+    <span class="htag {% if qtype=='domain' %}on{% endif %}">🔒 DOMAIN</span>
+    <span class="htag">🤖 AI АНАЛИЗ</span>
+  </div>
+</div>
+
+<div class="sw">
+  <form method="POST" action="/">
+    <div class="sbox">
+      <div class="srow">
+        <div class="sico">⬡</div>
+        <input class="sinput" name="query"
+          placeholder="телефон / email / ip / никнейм / ФИО / дата / домен"
+          value="{{ query or '' }}" autocomplete="off" id="main-input">
+        <button type="submit" class="sbtn" id="scan-btn">SCAN</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+      <span class="hint" onclick="sq('+79001234567')">📞 телефон</span>
+      <span class="hint" onclick="sq('user@mail.com')">✉ email</span>
+      <span class="hint" onclick="sq('8.8.8.8')">🌐 ip</span>
+      <span class="hint" onclick="sq('nickname')">👤 ник</span>
+      <span class="hint" onclick="sq('Иван Иванов')">🪪 ФИО</span>
+      <span class="hint" onclick="sq('15.06.1995')">🎂 дата</span>
+      <span class="hint" onclick="sq('google.com')">🔒 домен</span>
+    </div>
+  </form>
+</div>
+
+<div class="content">
+{% if query %}
+  <div class="target">
+    <div style="font-size:22px">
+      {% if qtype=='phone' %}📞{% elif qtype=='email' %}✉{% elif qtype=='ip' %}🌐{% elif qtype=='username' %}👤{% elif qtype=='fullname' %}🪪{% elif qtype=='birthday' %}🎂{% elif qtype=='domain' %}🔒{% else %}🔍{% endif %}
+    </div>
+    <div>
+      <div class="tlabel">цель разведки</div>
+      <div class="tval">{{ query }}</div>
+    </div>
+    <div class="tbadge">{{ qtype | upper }}</div>
+  </div>
+
+  <!-- AI ANALYSIS BOX -->
+  {% if ai_analysis %}
+  <div class="ai-box" style="margin-bottom:14px">
+    <div class="ai-hdr">
+      <div class="ai-pulse"></div>
+      <div class="ai-hdr-title">🤖 AI АНАЛИЗ</div>
+      <span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);margin-left:auto">LiquidationOsint Intelligence</span>
+    </div>
+    <div class="ai-content" id="ai-analysis-text">{{ ai_analysis }}</div>
+  </div>
+  {% endif %}
+
+  <div class="stabs">
+    <button class="stab on" onclick="sp('p-data',this)">⚡ ДАННЫЕ</button>
+    <button class="stab" onclick="sp('p-google',this)">🔎 GOOGLE ({{ google_results|length }})</button>
+    <button class="stab" onclick="sp('p-dorks',this)">🔍 DORKS ({{ dorks|length }})</button>
+    {% if qtype=='username' %}<button class="stab" onclick="sp('p-sherlock',this)">🕵 SHERLOCK ({{ sherlock_results|length }})</button>{% endif %}
+    {% if qtype=='email' and holehe_results %}<button class="stab" onclick="sp('p-holehe',this)">🔐 HOLEHE</button>{% endif %}
+    <button class="stab" onclick="sp('p-sites',this)">📡 СОЦСЕТИ</button>
+    {% if lookup_data and lookup_data.get('_links') %}<button class="stab" onclick="sp('p-links',this)">🔗 ССЫЛКИ</button>{% endif %}
+  </div>
+
+  <!-- DATA -->
+  <div class="panel on" id="p-data">
+    <div class="grid">
+      <div class="card full accent-y">
+        <div class="chdr"><span style="font-size:13px">⚡</span><span class="chdr-t">SCAN LOG</span></div>
+        <div class="cbody" style="padding:0">
+          <div class="term">
+<span class="t-d">$</span> liquidation-osint --target "<span style="color:var(--ac)">{{ query }}</span>" --type <span class="t-p">{{ qtype }}</span><br>
+<span class="t-d">[init]</span> <span class="t-w">Sherlock·65 · Holehe · HudsonRock · Shodan · Gravatar · GeoIP · AI</span><br>
+<span class="t-d">[type]</span> → <span class="t-p">{{ qtype | upper }}</span><br>
+{% for k,v in lookup_data.items() %}{% if not k.startswith('_') and v and v != '—' %}
+<span class="t-d">[+]</span> {{ k }}: <span class="t-w">{{ v }}</span><br>
+{% endif %}{% endfor %}
+<span class="t-d">[ok]</span> <span class="t-g">✓ Google:{{ google_results|length }} Dorks:{{ dorks|length }} Sites:{{ site_results|length }}{% if sherlock_results %} Sherlock:{{ sherlock_results|selectattr('found','equalto',true)|list|length }}/{{ sherlock_results|length }}{% endif %}{% if holehe_results %} Holehe:{{ holehe_results|selectattr('found','equalto',true)|list|length }}/{{ holehe_results|length }}{% endif %}</span>
+          </div>
+        </div>
+      </div>
+
+      {% if lookup_data %}
+      <div class="card accent-c">
+        <div class="chdr">
+          <span style="font-size:13px">📊</span><span class="chdr-t">ДАННЫЕ ОБЪЕКТА</span>
+          {% if lookup_data.get('GitHub аватар') %}<img style="width:26px;height:26px;border-radius:50%;border:1px solid var(--ac3);margin-left:auto" src="{{ lookup_data['GitHub аватар'] }}" alt="">{% endif %}
+        </div>
+        <div class="cbody">
+          {% for k,v in lookup_data.items() %}{% if not k.startswith('_') and v and v != '—' and k != 'GitHub аватар' %}
+          <div class="dr">
+            <div class="dk">{{ k }}</div>
+            <div class="dv {% if '⚠' in v %}warn{% elif v in ('✓ Найдена','Да','✓ Да') %}ok{% elif k in ('Страна','Город','Оператор','ISP','GitHub имя','ФИО','Номер') %}hi{% elif 'Gravatar' in k %}pu{% endif %}">
+              {% if k=='Gravatar фото' and v %}<img class="ava" src="{{ v }}" alt="avatar">{% else %}{{ v }}{% endif %}
+            </div>
+          </div>
+          {% endif %}{% endfor %}
+          {% if lookup_data.get('_map') %}<a class="mapbtn" href="{{ lookup_data['_map'] }}" target="_blank">🗺 Открыть на карте</a>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if qtype=='ip' and shodan_data %}
+      <div class="card accent-r">
+        <div class="chdr"><span style="font-size:13px">🌐</span><span class="chdr-t">SHODAN InternetDB</span></div>
+        <div class="cbody">
+          {% if shodan_data.ports %}<div style="margin-bottom:10px"><div class="dk" style="margin-bottom:5px">Открытые порты ({{ shodan_data.ports|length }})</div><div class="port-list">{% for p in shodan_data.ports %}<span class="port">:{{ p }}</span>{% endfor %}</div></div>{% endif %}
+          {% if shodan_data.cves %}<div style="margin-bottom:10px"><div class="dk" style="margin-bottom:5px;color:var(--ac2)">⚠ CVE ({{ shodan_data.cves|length }})</div><div class="port-list">{% for cv in shodan_data.cves[:8] %}<a class="cve-tag" href="https://nvd.nist.gov/vuln/detail/{{ cv }}" target="_blank">{{ cv }}</a>{% endfor %}</div></div>{% endif %}
+          {% if shodan_data.hostnames %}<div class="dr"><div class="dk">Hostnames</div><div class="dv hi">{{ shodan_data.hostnames[:3]|join(', ') }}</div></div>{% endif %}
+          {% if shodan_data.tags %}<div class="dr"><div class="dk">Теги</div><div class="dv">{{ shodan_data.tags|join(', ') }}</div></div>{% endif %}
+          {% if not shodan_data.ports and not shodan_data.cves %}<div style="color:var(--dim);text-align:center;padding:16px;font-family:'Share Tech Mono',monospace;font-size:11px">Нет данных в Shodan</div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if hudson_data and hudson_data.get('hudson_rock') %}
+      <div class="card accent-r">
+        <div class="chdr"><span style="font-size:13px">💀</span><span class="chdr-t">HUDSON ROCK — INFOSTEALERS</span></div>
+        <div class="cbody">
+          <div class="hudson-box">
+            <div class="hudson-num">{{ hudson_data.hudson_rock.get('stealers', hudson_data.hudson_rock.get('total',0)) }}</div>
+            <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--ac2);margin-top:4px">записей в базах инфостилеров</div>
+            {% if hudson_data.hudson_rock.get('message') %}<div style="margin-top:8px;font-size:10px;color:var(--tx)">{{ hudson_data.hudson_rock.message }}</div>{% endif %}
+            <a class="lnk" style="display:inline-flex;margin-top:10px" href="https://www.hudsonrock.com/threat-intelligence-cybercrime-tools" target="_blank">↗ HudsonRock</a>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- GOOGLE -->
+  <div class="panel" id="p-google">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">🔎</span><span class="chdr-t">GOOGLE УПОМИНАНИЯ</span><span class="chdr-badge">{{ google_results|length }}</span></div>
+      <div class="cbody">
+        {% for r in google_results %}
+        <div class="gres">
+          <div class="gres-title">{% if r.url %}<a href="{{ r.url }}" target="_blank">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}</div>
+          {% if r.url %}<div class="gres-url">{{ r.url[:90] }}{% if r.url|length > 90 %}…{% endif %}</div>{% endif %}
+          {% if r.snippet %}<div class="gres-snip">{{ r.snippet }}</div>{% endif %}
+        </div>
+        {% endfor %}
+        {% if not google_results %}<div style="color:var(--dim);text-align:center;padding:24px;font-family:'Share Tech Mono',monospace;font-size:11px">Ничего не найдено в Google</div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- DORKS -->
+  <div class="panel" id="p-dorks">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">🔍</span><span class="chdr-t">GOOGLE DORKS — {{ qtype | upper }}</span><span class="chdr-badge">{{ dorks|length }}</span></div>
+      <div class="cbody">
+        <div class="dork-list">
+          {% for d in dorks %}
+          <div class="dork-item">
+            <div class="dork-name">{{ d.name }}</div>
+            <div class="dork-q">{{ d.dork }}</div>
+            <a class="dork-go" href="{{ d.url }}" target="_blank">GO ↗</a>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SHERLOCK -->
+  {% if qtype=='username' %}
+  <div class="panel" id="p-sherlock">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">🕵</span><span class="chdr-t">SHERLOCK — 65+ ПЛАТФОРМ</span><span class="chdr-badge">{{ sherlock_results|length }}</span></div>
+      <div class="cbody">
+        <div class="stat-pills">
+          <div class="sp g">✓ Найдено: {{ sherlock_results|selectattr('found','equalto',true)|list|length }}</div>
+          <div class="sp r">✗ Нет: {{ sherlock_results|selectattr('found','equalto',false)|list|length }}</div>
+          <div class="sp y">? Ошибка: {{ sherlock_results|selectattr('found','equalto',none)|list|length }}</div>
+        </div>
+        <div class="shgrid">
+          {% for s in sherlock_results %}
+          <a class="shitem {{ 'found' if s.found else ('err' if s.found is none else 'notfound') }}" href="{{ s.url }}" target="_blank">
+            <div class="sh-dot"></div>
+            <span class="sh-name">{{ s.name }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- HOLEHE -->
+  {% if qtype=='email' and holehe_results %}
+  <div class="panel" id="p-holehe">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">🔐</span><span class="chdr-t">HOLEHE — EMAIL НА ПЛАТФОРМАХ</span><span class="chdr-badge">{{ holehe_results|length }}</span></div>
+      <div class="cbody">
+        <div class="holehe-grid">
+          {% for h in holehe_results %}
+          <a class="holehe-item {{ 'found' if h.found == True else ('notfound' if h.found == False else 'unknown') }}" href="{{ h.url }}" target="_blank" style="text-decoration:none">
+            <div class="sh-dot" style="{% if h.found == True %}background:#00ff88;box-shadow:0 0 8px #00ff88{% elif h.found == False %}background:var(--dim){% else %}background:var(--ac4){% endif %}"></div>
+            <div>
+              <div class="holehe-name">{{ h.platform }}</div>
+              {% if h.detail %}<div class="holehe-detail">{{ h.detail }}</div>{% endif %}
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- SITES -->
+  <div class="panel" id="p-sites">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">📡</span><span class="chdr-t">ПРОВЕРКА ПЛАТФОРМ</span></div>
+      <div class="cbody">
+        <div class="sgrid">
+          {% for s in site_results %}
+          <a class="sitem" href="{{ s.link }}" target="_blank">
+            <div style="font-size:18px">
+              {% if s.name=='VKontakte' %}📘{% elif s.name=='Telegram' %}✈{% elif s.name=='GitHub' %}⬡{% elif s.name=='Instagram' %}📷{% elif s.name=='YouTube' %}▶{% elif s.name=='Twitter/X' %}🐦{% elif s.name=='TikTok' %}♪{% elif s.name=='Reddit' %}👽{% elif s.name=='LinkedIn' %}💼{% elif s.name=='Facebook' %}🌍{% elif s.name=='Pastebin' %}📋{% elif s.name=='OK.ru' %}🔴{% elif s.name=='Habr' %}⚡{% elif s.name=='Pikabu' %}🍕{% elif s.name=='VC.ru' %}📈{% else %}🔗{% endif %}
+            </div>
+            <span class="sname">{{ s.name }}</span>
+            {% if s.found == True %}<span class="sfound">● НАЙДЕН</span>{% elif s.found == False %}<span class="snot">○ нет</span>{% else %}<span class="serr">? ошибка</span>{% endif %}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LINKS -->
+  {% if lookup_data and lookup_data.get('_links') %}
+  <div class="panel" id="p-links">
+    <div class="card full">
+      <div class="chdr"><span style="font-size:13px">🔗</span><span class="chdr-t">ССЫЛКИ ДЛЯ ПРОВЕРКИ</span></div>
+      <div class="cbody">
+        <div class="lgrid">
+          {% for name, url in lookup_data['_links'] %}{% if url %}
+          <a class="lnk {% if name in ('Shodan','HaveIBeenPwned','VirusTotal','GetContact','HudsonRock') %}hl{% endif %}" href="{{ url }}" target="_blank">↗ {{ name }}</a>
+          {% endif %}{% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+{% else %}
+<div class="empty">
+  <div class="empty-art">
+┌──────────────────────────────────────────────────┐<br>
+│   LiquidationOsint v2.0 — Ultimate OSINT         │<br>
+│   ────────────────────────────────────────────── │<br>
+│   &gt; Phone · Email · IP · Username · ФИО        │<br>
+│   &gt; Domain · WHOIS · DNS · Certs               │<br>
+│   &gt; Sherlock 65+ · Holehe · HudsonRock         │<br>
+│   &gt; Shodan CVE · GeoIP · Google Dorks          │<br>
+│   &gt; 🤖 AI Анализ + AI Чат                      │<br>
+└──────────────────────────────────────────────────┘
+  </div>
+  <div class="empty-title">READY TO SCAN</div>
+  <div class="empty-sub">введи цель выше и нажми SCAN</div>
+</div>
+<div class="modules">
+  <div class="mod-card"><div class="mod-icon">📞</div><div class="mod-name">Phone</div><div class="mod-desc">Оператор, страна, тип линии. Gravatar, GetContact, TrueCaller, 2GIS.</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac3)"><div class="mod-icon">✉</div><div class="mod-name">Email + Holehe</div><div class="mod-desc">Gravatar, Holehe проверка платформ, HudsonRock infostealers, HIBP.</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac2)"><div class="mod-icon">🌐</div><div class="mod-name">IP + Shodan</div><div class="mod-desc">GeoIP, ISP, VPN детект, Shodan порты+CVE, VirusTotal, GreyNoise.</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac5)"><div class="mod-icon">👤</div><div class="mod-name">Sherlock 65+</div><div class="mod-desc">GitHub, VK, TikTok, Steam, Twitch, Bluesky, Mastodon, Avito и др.</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac3)"><div class="mod-icon">🔒</div><div class="mod-name">Domain</div><div class="mod-desc">WHOIS, DNS, SSL сертификаты CT, субдомены, tech stack, Wayback.</div></div>
+  <div class="mod-card"><div class="mod-icon">🔍</div><div class="mod-name">Google Dorks</div><div class="mod-desc">10+ умных дорков под каждый тип — соцсети, утечки, файлы, форумы.</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac2)"><div class="mod-icon">💀</div><div class="mod-name">HudsonRock</div><div class="mod-desc">Проверка email и доменов по базам инфостилеров (Raccoon, Redline и др.)</div></div>
+  <div class="mod-card" style="border-top-color:var(--ac5)"><div class="mod-icon">🤖</div><div class="mod-name">AI Анализ</div><div class="mod-desc">ИИ-ассистент анализирует находки и даёт рекомендации по расследованию.</div></div>
+</div>
+{% endif %}
+</div>
+
+<!-- AI CHAT FLOATING -->
+<button class="ai-chat-btn" onclick="toggleChat()" title="AI Ассистент">🤖</button>
+<div class="ai-chat-panel" id="ai-chat">
+  <div class="ai-chat-hdr">
+    <div class="ai-pulse" style="width:7px;height:7px"></div>
+    <div class="ai-chat-hdr-t">AI Ассистент</div>
+    <button class="ai-chat-close" onclick="toggleChat()">✕</button>
+  </div>
+  <div class="ai-chat-msgs" id="chat-msgs">
+    <div class="ai-msg bot">👋 Привет! Я ИИ-ассистент LiquidationOsint.<br>Спроси про OSINT методы, помогу с расследованием или объясню результаты поиска.</div>
+  </div>
+  <div class="ai-chat-input-row">
+    <input class="ai-chat-input" id="chat-input" placeholder="Спроси что-нибудь..." onkeydown="if(event.key==='Enter')sendChat()">
+    <button class="ai-chat-send" onclick="sendChat()">▶</button>
+  </div>
+</div>
+
+<script>
+function sq(v){ document.getElementById('main-input').value=v }
+function sp(id,btn){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.stab').forEach(b=>b.classList.remove('on'));
+  document.getElementById(id).classList.add('on'); btn.classList.add('on');
+}
+
+// Render markdown-like bold in AI text
+document.addEventListener('DOMContentLoaded',()=>{
+  const el = document.getElementById('ai-analysis-text');
+  if(el) el.innerHTML = el.textContent
+    .replace(/\*\*(.*?)\*\*/g,'<b>$1</b>')
+    .replace(/__(.*?)__/g,'<b>$1</b>');
+});
+
+// AI Chat
+let chatOpen = false;
+function toggleChat(){
+  chatOpen = !chatOpen;
+  document.getElementById('ai-chat').classList.toggle('open', chatOpen);
+  if(chatOpen) document.getElementById('chat-input').focus();
+}
+
+function appendMsg(role, text){
+  const msgs = document.getElementById('chat-msgs');
+  const div = document.createElement('div');
+  div.className = 'ai-msg ' + role;
+  div.innerHTML = text.replace(/\*\*(.*?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function sendChat(){
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if(!msg) return;
+  input.value = '';
+  appendMsg('user', msg);
+  
+  const thinking = document.createElement('div');
+  thinking.className = 'ai-msg bot'; thinking.id = 'thinking';
+  thinking.textContent = '⏳ думаю...';
+  document.getElementById('chat-msgs').appendChild(thinking);
+  document.getElementById('chat-msgs').scrollTop = 99999;
+
+  try{
+    const context = "{{ query|default('') }}" ? "Текущий поиск: {{ query|default('') }} ({{ qtype|default('') }})" : "";
+    const r = await fetch('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg, context})
+    });
+    const d = await r.json();
+    document.getElementById('thinking').remove();
+    appendMsg('bot', d.reply || '⚠ Ошибка ответа');
+  }catch(e){
+    document.getElementById('thinking').remove();
+    appendMsg('bot', '⚠ Ошибка соединения');
+  }
+}
+
+// Scan button loading state
+document.querySelector('form').addEventListener('submit', ()=>{
+  const btn = document.getElementById('scan-btn');
+  btn.textContent = '⏳ SCAN...';
+  btn.disabled = true;
+});
+</script>
+{% endblock %}

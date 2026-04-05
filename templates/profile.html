@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Профиль — {{ user.username }}{% endblock %}
+{% block head %}
+<style>
+.profile-wrap{max-width:900px;margin:0 auto;padding:30px 16px 60px}
+.profile-header{background:var(--s1);border:1px solid var(--border);border-top:2px solid var(--ac3);padding:24px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.profile-avatar{width:64px;height:64px;border-radius:50%;background:var(--s3);border:2px solid var(--ac3);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',cursive;font-size:28px;color:var(--ac3);flex-shrink:0}
+.profile-name{font-family:'Bebas Neue',cursive;font-size:28px;letter-spacing:4px;color:var(--ac);line-height:1}
+.profile-email{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--dim);margin-top:3px}
+.profile-role{margin-top:6px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.stat-mini{background:var(--s1);border:1px solid var(--border);padding:12px;text-align:center}
+.stat-mini-num{font-family:'Bebas Neue',cursive;font-size:28px;color:var(--ac);letter-spacing:2px}
+.stat-mini-label{font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:2px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="profile-wrap">
+  <div class="profile-header">
+    <div class="profile-avatar">{{ user.username[0].upper() }}</div>
+    <div>
+      <div class="profile-name">{{ user.username }}</div>
+      <div class="profile-email">{{ user.email }}</div>
+      <div class="profile-role">
+        <span class="badge {{ 'badge-admin' if user.role=='admin' else 'badge-user' }}">{{ user.role.upper() }}</span>
+        {% if user.is_banned %}<span class="badge badge-banned" style="margin-left:5px">BANNED</span>{% endif %}
+      </div>
+    </div>
+    <div style="margin-left:auto;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim)">
+      Регистрация: {{ user.created_at[:10] }}<br>
+      Последний вход: {{ user.last_login[:10] if user.last_login else '—' }}
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-mini">
+      <div class="stat-mini-num">{{ searches|length }}</div>
+      <div class="stat-mini-label">ПОИСКОВ</div>
+    </div>
+    <div class="stat-mini">
+      <div class="stat-mini-num">{{ user.login_count }}</div>
+      <div class="stat-mini-label">ВХОДОВ</div>
+    </div>
+    <div class="stat-mini">
+      <div class="stat-mini-num">{{ user.ip[-8:] if user.ip else '—' }}</div>
+      <div class="stat-mini-label">ПОСЛЕДНИЙ IP</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chdr"><span style="font-size:13px">🔍</span><span class="chdr-t">ИСТОРИЯ ПОИСКОВ</span><span class="chdr-badge">{{ searches|length }}</span></div>
+    <div class="cbody" style="padding:0;overflow-x:auto">
+      {% if searches %}
+      <table class="tbl">
+        <thead><tr><th>#</th><th>Запрос</th><th>Тип</th><th>Результатов</th><th>Дата</th></tr></thead>
+        <tbody>
+        {% for s in searches %}
+        <tr>
+          <td style="color:var(--dim)">{{ loop.index }}</td>
+          <td style="color:var(--ac)"><a href="/?q={{ s.query }}" style="color:inherit;text-decoration:none">{{ s.query }}</a></td>
+          <td><span class="badge badge-user">{{ (s.qtype or '?').upper() }}</span></td>
+          <td style="color:var(--ac3)">{{ s.results }}</td>
+          <td style="color:var(--dim)">{{ s.created_at[:16] }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="text-align:center;padding:30px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--dim)">Поисков ещё нет</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
