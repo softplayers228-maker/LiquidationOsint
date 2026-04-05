@@ -16,6 +16,9 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
+@app.route("/")
+def home():
+    return "OK"
 app.secret_key = os.environ.get("SECRET_KEY", "liq-osint-ultra-secret-v2-2024")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
