@@ -16,9 +16,6 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
-@app.route("/")
-def home():
-    return "OK"
 app.secret_key = os.environ.get("SECRET_KEY", "liq-osint-ultra-secret-v2-2024")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
@@ -1859,15 +1856,13 @@ def not_found(e):
 def server_error(e):
     return render_template("500.html", sitename=SITE_NAME, tiktok_url=TIKTOK_URL, author=AUTHOR), 500
 
+# ── Инициализация БД при запуске (работает и с gunicorn, и напрямую) ──
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ◈ {SITE_NAME} v2.0")
     print(f"  ◈ http://localhost:{port}")
     print(f"  ◈ Admin: {ADMIN_EMAIL} / {ADMIN_PASS}")
-    print(f"  ◈ AI: {'✓ ACTIVE' if ANTHROPIC_KEY else '✗ No key (add ANTHROPIC_API_KEY)'}\n")
+    print(f"  ◈ AI: {'✓ ACTIVE' if GROQ_API_KEY else '✗ No key (add GROQ_API_KEY)'}\n")
     app.run(host="0.0.0.0", port=port, debug=False)
-  if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
