@@ -1864,3 +1864,7 @@ if __name__ == "__main__":
     print(f"  ◈ Admin: {ADMIN_EMAIL} / {ADMIN_PASS}")
     print(f"  ◈ AI: {'✓ ACTIVE' if ANTHROPIC_KEY else '✗ No key (add ANTHROPIC_API_KEY)'}\n")
     app.run(host="0.0.0.0", port=port, debug=False)
+  if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
