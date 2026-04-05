@@ -55,20 +55,25 @@ def init_db():
     db = sqlite3.connect(DB_PATH)
     db.executescript("""
     CREATE TABLE IF NOT EXISTS users (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        email        TEXT UNIQUE NOT NULL,
-        username     TEXT NOT NULL,
-        password     TEXT,
-        avatar       TEXT,
-        role         TEXT DEFAULT 'user',
-        is_banned    INTEGER DEFAULT 0,
-        created_at   TEXT DEFAULT (datetime('now')),
-        last_login   TEXT,
-        login_count  INTEGER DEFAULT 0,
-        ip           TEXT,
-        country      TEXT,
-        device       TEXT,
-        remember_token TEXT
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        email          TEXT UNIQUE NOT NULL,
+        username       TEXT NOT NULL,
+        password       TEXT,
+        avatar         TEXT,
+        role           TEXT DEFAULT 'user',
+        is_banned      INTEGER DEFAULT 0,
+        created_at     TEXT DEFAULT (datetime('now')),
+        last_login     TEXT,
+        login_count    INTEGER DEFAULT 0,
+        ip             TEXT,
+        country        TEXT,
+        device         TEXT,
+        remember_token TEXT,
+        groq_key       TEXT,
+        ai_credits     INTEGER DEFAULT 10,
+        ai_credits_reset TEXT DEFAULT (date('now')),
+        ai_last_request  TEXT,
+        plan           TEXT DEFAULT 'free'
     );
     CREATE TABLE IF NOT EXISTS searches (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,10 +123,24 @@ def init_db():
     INSERT OR IGNORE INTO settings VALUES ('maintenance','0');
     INSERT OR IGNORE INTO settings VALUES ('max_searches_per_day','100');
     INSERT OR IGNORE INTO settings VALUES ('ai_enabled','1');
+    INSERT OR IGNORE INTO settings VALUES ('free_credits_per_day','10');
+    INSERT OR IGNORE INTO settings VALUES ('ai_cooldown_seconds','8');
     """)
+    # Migrations for existing DBs
+    for col, definition in [
+        ("groq_key",         "TEXT"),
+        ("ai_credits",       "INTEGER DEFAULT 10"),
+        ("ai_credits_reset", "TEXT DEFAULT (date('now'))"),
+        ("ai_last_request",  "TEXT"),
+        ("plan",             "TEXT DEFAULT 'free'"),
+    ]:
+        try:
+            db.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
+            db.commit()
+        except: pass
     pw = hashlib.sha256(ADMIN_PASS.encode()).hexdigest()
-    db.execute("INSERT OR IGNORE INTO users (email,username,password,role) VALUES (?,?,?,?)",
-               (ADMIN_EMAIL, "Admin", pw, "admin"))
+    db.execute("INSERT OR IGNORE INTO users (email,username,password,role,plan,ai_credits) VALUES (?,?,?,?,?,?)",
+               (ADMIN_EMAIL, "Admin", pw, "admin", "unlimited", 9999))
     db.commit()
     db.close()
 
@@ -197,22 +216,107 @@ def get_device_info(ua):
     return "🖥 Desktop"
 
 # ═══════════════════════════════════════════════════════════════
-#  AI ENGINE — GROQ (llama-3.3-70b-versatile)
+#  CREDITS SYSTEM
 # ═══════════════════════════════════════════════════════════════
+FREE_CREDITS_PER_DAY = 10
+AI_COOLDOWN_SECONDS  = 8   # min seconds between AI requests per user
+
+def get_user_credits(user_id):
+    """Return current credits for user, resetting if new day."""
+    db = get_db()
+    u = db.execute("SELECT ai_credits, ai_credits_reset, plan, groq_key FROM users WHERE id=?",
+                   (user_id,)).fetchone()
+    if not u: return 0, False
+
+    # Unlimited plan or own groq key
+    if u["plan"] == "unlimited" or u["groq_key"]:
+        return 9999, True
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Reset credits if new day
+    if u["ai_credits_reset"] != today:
+        try:
+            day_credits = int(db.execute(
+                "SELECT value FROM settings WHERE key='free_credits_per_day'"
+            ).fetchone()["value"])
+        except: day_credits = FREE_CREDITS_PER_DAY
+        db.execute("UPDATE users SET ai_credits=?, ai_credits_reset=? WHERE id=?",
+                   (day_credits, today, user_id))
+        db.commit()
+        return day_credits, True
+
+    return u["ai_credits"], u["ai_credits"] > 0
+
+def check_cooldown(user_id):
+    """Returns (ok, wait_seconds). Enforces min delay between AI calls."""
+    db = get_db()
+    u = db.execute("SELECT ai_last_request, plan, groq_key FROM users WHERE id=?",
+                   (user_id,)).fetchone()
+    if not u: return True, 0
+    if u["plan"] == "unlimited" or u["groq_key"]: return True, 0
+    if not u["ai_last_request"]: return True, 0
+    try:
+        last = datetime.fromisoformat(u["ai_last_request"])
+        elapsed = (datetime.now() - last).total_seconds()
+        try:
+            cooldown = int(db.execute(
+                "SELECT value FROM settings WHERE key='ai_cooldown_seconds'"
+            ).fetchone()["value"])
+        except: cooldown = AI_COOLDOWN_SECONDS
+        if elapsed < cooldown:
+            return False, int(cooldown - elapsed)
+    except: pass
+    return True, 0
+
+def spend_credit(user_id):
+    """Deduct 1 credit and update last_request timestamp."""
+    db = get_db()
+    u = db.execute("SELECT plan, groq_key FROM users WHERE id=?", (user_id,)).fetchone()
+    if u and (u["plan"] == "unlimited" or u["groq_key"]):
+        db.execute("UPDATE users SET ai_last_request=? WHERE id=?",
+                   (datetime.now().isoformat(), user_id))
+    else:
+        db.execute("""UPDATE users SET
+            ai_credits = MAX(0, ai_credits - 1),
+            ai_last_request = ?
+            WHERE id=?""", (datetime.now().isoformat(), user_id))
+    db.commit()
+
+def credits_status(user_id):
+    """Return dict with full credits info for frontend."""
+    db = get_db()
+    u = db.execute(
+        "SELECT ai_credits, ai_credits_reset, plan, groq_key FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+    if not u: return {}
+    has_own_key = bool(u["groq_key"])
+    unlimited   = u["plan"] == "unlimited" or has_own_key
+    credits, _  = get_user_credits(user_id)
+    return {
+        "credits":     credits if not unlimited else "∞",
+        "unlimited":   unlimited,
+        "has_own_key": has_own_key,
+        "plan":        u["plan"],
+        "reset_date":  u["ai_credits_reset"],
+    }
+
+
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-def _groq(messages, model=None, max_tokens=1200, temperature=0.7):
+def _groq(messages, model=None, max_tokens=1200, temperature=0.7, api_key=None):
     """
     Core Groq API call — OpenAI-compatible endpoint.
-    Returns text string or raises exception.
+    Uses user's personal key if provided, falls back to global key.
     """
-    if not GROQ_API_KEY:
+    key = api_key or GROQ_API_KEY
+    if not key:
         raise ValueError("NO_KEY")
     m = model or GROQ_MODEL
     resp = requests.post(
         GROQ_URL,
         headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Bearer {key}",
             "Content-Type":  "application/json",
         },
         json={
@@ -269,7 +373,7 @@ _SYS_DORK = """Ты — эксперт по Google Dorks и продвинуты
 
 
 def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0,
-                     holehe_found=0, shodan_data=None):
+                     holehe_found=0, shodan_data=None, user_key=None):
     """Deep AI analysis of all OSINT results using Groq llama-3.3-70b."""
 
     # Build rich context
@@ -297,7 +401,7 @@ def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0
         f"Проведи полный OSINT-анализ."
     )
 
-    if GROQ_API_KEY:
+    if user_key or GROQ_API_KEY:
         try:
             return _groq(
                 [
@@ -307,6 +411,7 @@ def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0
                 model=GROQ_MODEL,
                 max_tokens=1000,
                 temperature=0.4,
+                api_key=user_key,
             )
         except ValueError:
             pass   # no key — fall through
@@ -402,31 +507,39 @@ def ai_analyze_osint(query, qtype, lookup_data, sherlock_found=0, google_count=0
     return "\n".join(lines)
 
 
-def ai_chat_response(messages, context=""):
+def ai_chat_response(messages, context="", user_key=None):
     """
     Full AI chat via Groq llama-3.3-70b-versatile.
-    messages = list of {role, content} dicts (OpenAI format).
+    Uses user's personal Groq key if provided, else global key.
     """
     system_text = _SYS_CHAT.format(context=context or "нет")
+    key = user_key or GROQ_API_KEY
 
-    if GROQ_API_KEY:
+    if key:
         try:
             groq_msgs = [{"role": "system", "content": system_text}] + messages[-20:]
-            return _groq(groq_msgs, model=GROQ_MODEL, max_tokens=1200, temperature=0.65)
+            return _groq(groq_msgs, model=GROQ_MODEL, max_tokens=1200, temperature=0.65, api_key=key)
         except ValueError:
             pass
         except Exception as e:
             print(f"[GROQ chat error] {e}")
-            return f"⚠️ Groq временно недоступен: `{str(e)[:80]}`\nПроверь правильность GROQ_API_KEY в Railway Variables."
+            if "429" in str(e):
+                return (
+                    "⏳ **Лимит запросов исчерпан**\n\n"
+                    "Твой Groq ключ временно заблокирован из-за превышения лимита.\n"
+                    "Подожди 1-2 минуты и попробуй снова.\n\n"
+                    "Или создай новый ключ на **console.groq.com/keys** и обнови его в профиле."
+                )
+            return f"⚠️ Ошибка: `{str(e)[:80]}`"
 
     return (
-        "🤖 **ИИ не подключён**\n\n"
-        "Чтобы активировать:\n"
-        "1. Зайди на **console.groq.com/keys**\n"
-        "2. Создай API ключ (бесплатно)\n"
-        "3. В Railway → Variables добавь:\n"
-        "   `GROQ_API_KEY` = `gsk_...твой_ключ...`\n\n"
-        "Groq даёт **бесплатный** доступ к Llama 3.3 70B 🚀"
+        "🔑 **Добавь свой Groq ключ**\n\n"
+        "Для работы ИИ нужен личный API ключ — это бесплатно!\n\n"
+        "1️⃣ Зайди на **console.groq.com/keys**\n"
+        "2️⃣ Нажми **Create API Key**\n"
+        "3️⃣ Скопируй ключ (начинается с `gsk_`)\n"
+        "4️⃣ Вставь его в **Профиль → Мой Groq ключ**\n\n"
+        "У каждого пользователя свой лимит — 14,400 запросов в день бесплатно! 🚀"
     )
 
 
@@ -1163,12 +1276,14 @@ def index():
             holehe_found   = len([h for h in ctx["holehe_results"]   if h.get("found")])
 
             # ── AI: deep analysis ──
+            user_key = user["groq_key"] if user and user["groq_key"] else None
             ctx["ai_analysis"] = ai_analyze_osint(
                 q, qtype, ctx["lookup_data"],
                 sherlock_found=sherlock_found,
                 google_count=len(ctx["google_results"]),
                 holehe_found=holehe_found,
                 shodan_data=ctx["shodan_data"],
+                user_key=user_key,
             )
 
             # ── AI: custom dorks (runs in parallel via thread) ──
@@ -1192,7 +1307,8 @@ def index():
 
     return render_template("index.html", **ctx, user=user,
                            sitename=SITE_NAME, author=AUTHOR, tiktok_url=TIKTOK_URL,
-                           google_verification=GOOGLE_VERIFICATION)
+                           google_verification=GOOGLE_VERIFICATION,
+                           user_credits=credits_status(user["id"]) if user else {})
 
 @app.route("/api/ai-dorks", methods=["POST"])
 @login_required
@@ -1214,24 +1330,65 @@ def api_chat():
     context = data.get("context","")
     if not msg: return jsonify({"error": "empty"}), 400
 
+    # ── Cooldown check ──
+    ok, wait = check_cooldown(user["id"])
+    if not ok:
+        return jsonify({
+            "reply": f"⏳ Подожди **{wait} сек** перед следующим вопросом.",
+            "credits": credits_status(user["id"])
+        })
+
+    # ── Credits check ──
+    credits, has_credits = get_user_credits(user["id"])
+    if not has_credits:
+        return jsonify({
+            "reply": (
+                "❌ **Лимит исчерпан на сегодня**\n\n"
+                "У тебя закончились бесплатные запросы (10/день).\n\n"
+                "🔑 **Хочешь больше?**\n"
+                "Добавь свой бесплатный Groq ключ в профиле — "
+                "тогда получишь **14,400 запросов в день** лично для себя!\n\n"
+                "1️⃣ Зайди на **console.groq.com/keys**\n"
+                "2️⃣ Создай ключ бесплатно\n"
+                "3️⃣ Вставь в **Профиль → Мой Groq ключ**\n\n"
+                "⏰ Или подожди до завтра — лимит сбросится автоматически."
+            ),
+            "credits": credits_status(user["id"]),
+            "limit_reached": True
+        })
+
+    # ── Use user's own key or global ──
+    user_key = user["groq_key"] if user["groq_key"] else None
+
     db = get_db()
-    # Load last 10 messages for context
     history = db.execute(
-        "SELECT role,content FROM ai_chats WHERE user_id=? ORDER BY created_at DESC LIMIT 10",
+        "SELECT role,content FROM ai_chats WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
         (user["id"],)
     ).fetchall()
     messages = [{"role": r["role"], "content": r["content"]} for r in reversed(history)]
     messages.append({"role": "user", "content": msg})
 
-    reply = ai_chat_response(messages, context)
+    reply = ai_chat_response(messages, context, user_key=user_key)
 
-    # Save to DB
+    # ── Spend credit ──
+    spend_credit(user["id"])
+
     db.execute("INSERT INTO ai_chats (user_id,role,content) VALUES (?,?,?)",
                (user["id"], "user", msg))
     db.execute("INSERT INTO ai_chats (user_id,role,content) VALUES (?,?,?)",
                (user["id"], "assistant", reply))
     db.commit()
-    return jsonify({"reply": reply})
+
+    return jsonify({
+        "reply": reply,
+        "credits": credits_status(user["id"])
+    })
+
+@app.route("/api/credits")
+@login_required
+def api_credits():
+    user = current_user()
+    return jsonify(credits_status(user["id"]))
 
 # ── Export ───────────────────────────────────────────────────────
 @app.route("/export/<int:search_id>/<fmt>")
@@ -1288,8 +1445,37 @@ def profile():
     user = current_user()
     if not user: return redirect(url_for("login"))
     db = get_db()
-    searches = db.execute("SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC LIMIT 50", (user["id"],)).fetchall()
-    return render_template("profile.html", user=user, searches=searches, sitename=SITE_NAME, tiktok_url=TIKTOK_URL, author=AUTHOR)
+    searches = db.execute(
+        "SELECT * FROM searches WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+        (user["id"],)
+    ).fetchall()
+    # mask groq key for display
+    groq_masked = ""
+    if user["groq_key"]:
+        k = user["groq_key"]
+        groq_masked = k[:8] + "..." + k[-4:] if len(k) > 12 else "***"
+    return render_template("profile.html", user=user, searches=searches,
+                           sitename=SITE_NAME, tiktok_url=TIKTOK_URL, author=AUTHOR,
+                           groq_masked=groq_masked)
+
+@app.route("/save-groq-key", methods=["POST"])
+@login_required
+def save_groq_key():
+    user = current_user()
+    key = request.form.get("groq_key","").strip()
+    db = get_db()
+    if key:
+        # basic validation
+        if not key.startswith("gsk_") or len(key) < 20:
+            flash("Неверный формат ключа. Ключ должен начинаться с gsk_", "error")
+            return redirect(url_for("profile"))
+        db.execute("UPDATE users SET groq_key=? WHERE id=?", (key, user["id"]))
+        flash("✅ Groq ключ сохранён! Теперь ИИ использует твой личный лимит.", "success")
+    else:
+        db.execute("UPDATE users SET groq_key=NULL WHERE id=?", (user["id"],))
+        flash("Groq ключ удалён", "info")
+    db.commit()
+    return redirect(url_for("profile"))
 
 # ── Admin ────────────────────────────────────────────────────────
 @app.route("/admin")
@@ -1349,11 +1535,27 @@ def admin_set_role(uid):
         flash("Роль обновлена", "success")
     return redirect(url_for("admin"))
 
+@app.route("/admin/user/<int:uid>/credits", methods=["POST"])
+@admin_required
+def admin_give_credits(uid):
+    db = get_db()
+    amount = int(request.form.get("amount", 10))
+    plan   = request.form.get("plan", "")
+    if plan:
+        db.execute("UPDATE users SET plan=? WHERE id=?", (plan, uid))
+        flash(f"План изменён на {plan}", "success")
+    if amount:
+        db.execute("UPDATE users SET ai_credits=ai_credits+? WHERE id=?", (amount, uid))
+        flash(f"Добавлено {amount} кредитов", "success")
+    db.commit()
+    return redirect(url_for("admin"))
+
 @app.route("/admin/settings", methods=["POST"])
 @admin_required
 def admin_settings():
     db = get_db()
-    for key in ["require_login","maintenance","max_searches_per_day","ai_enabled"]:
+    for key in ["require_login","maintenance","max_searches_per_day",
+                "ai_enabled","free_credits_per_day","ai_cooldown_seconds"]:
         val = request.form.get(key,"0")
         db.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)", (key, val))
     db.commit()
