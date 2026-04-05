@@ -590,7 +590,15 @@ def ai_osint_tips(qtype):
 #  OSINT ENGINES
 # ═══════════════════════════════════════════════════════════════
 def detect_type(q):
-    q = q.strip()
+    q = q.strip().upper()
+    # Car plate RU: А000АА777, А000АА77 etc
+    if re.match(r"^[АВЕКМНОРСТУХ]{1}\d{3}[АВЕКМНОРСТУХ]{2}\d{2,3}$", q): return "car_plate"
+    # VIN: 17 chars
+    if re.match(r"^[A-HJ-NPR-Z0-9]{17}$", q): return "vin"
+    # Crypto BTC/ETH address
+    if re.match(r"^(1|3|bc1)[A-Za-z0-9]{25,62}$", q): return "crypto_btc"
+    if re.match(r"^0x[a-fA-F0-9]{40}$", q): return "crypto_eth"
+    q = q.strip()  # restore original case for rest
     if re.match(r"^\+?\d[\d\s\-()]{7,14}$", q):             return "phone"
     if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", q):          return "email"
     if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q):              return "ip"
@@ -602,6 +610,161 @@ def detect_type(q):
     if 2 <= len(words) <= 4 and all(re.match(r"^[а-яёА-ЯЁa-zA-Z\-]+$", w) for w in words):
         return "fullname"
     return "username"
+
+# ── NEW: Car plate lookup ────────────────────────────────────────
+def lookup_car_plate(plate):
+    plate = plate.upper().replace(" ","")
+    out = {"Номер": plate}
+    # Extract region code
+    region_codes = {
+        "01":"Республика Адыгея","02":"Башкортостан","03":"Бурятия","04":"Алтай",
+        "05":"Дагестан","06":"Ингушетия","07":"Кабардино-Балкария","08":"Калмыкия",
+        "09":"Карачаево-Черкессия","10":"Карелия","11":"Коми","12":"Марий Эл",
+        "13":"Мордовия","14":"Якутия","15":"Северная Осетия","16":"Татарстан",
+        "17":"Тыва","18":"Удмуртия","19":"Хакасия","21":"Чувашия","22":"Алтайский край",
+        "23":"Краснодарский край","24":"Красноярский край","25":"Приморский край",
+        "26":"Ставропольский край","27":"Хабаровский край","28":"Амурская область",
+        "29":"Архангельская область","30":"Астраханская область","31":"Белгородская область",
+        "32":"Брянская область","33":"Владимирская область","34":"Волгоградская область",
+        "35":"Вологодская область","36":"Воронежская область","37":"Ивановская область",
+        "38":"Иркутская область","39":"Калининградская область","40":"Калужская область",
+        "41":"Камчатский край","42":"Кемеровская область","43":"Кировская область",
+        "44":"Костромская область","45":"Курганская область","46":"Курская область",
+        "47":"Ленинградская область","48":"Липецкая область","49":"Магаданская область",
+        "50":"Московская область","51":"Мурманская область","52":"Нижегородская область",
+        "53":"Новгородская область","54":"Новосибирская область","55":"Омская область",
+        "56":"Оренбургская область","57":"Орловская область","58":"Пензенская область",
+        "59":"Пермский край","60":"Псковская область","61":"Ростовская область",
+        "62":"Рязанская область","63":"Самарская область","64":"Саратовская область",
+        "65":"Сахалинская область","66":"Свердловская область","67":"Смоленская область",
+        "68":"Тамбовская область","69":"Тверская область","70":"Томская область",
+        "71":"Тульская область","72":"Тюменская область","73":"Ульяновская область",
+        "74":"Челябинская область","75":"Забайкальский край","76":"Ярославская область",
+        "77":"Москва","78":"Санкт-Петербург","79":"Еврейская АО",
+        "86":"Ханты-Мансийский АО","87":"Чукотский АО","89":"Ямало-Ненецкий АО",
+        "90":"Московская область","91":"Крым","92":"Севастополь","93":"Краснодарский край",
+        "95":"Чечня","96":"Свердловская область","97":"Москва","98":"Санкт-Петербург",
+        "99":"Москва","102":"Башкортостан","116":"Татарстан","123":"Краснодарский край",
+        "124":"Красноярский край","125":"Приморский край","126":"Ставропольский край",
+        "134":"Волгоградская область","138":"Иркутская область","142":"Кемеровская область",
+        "150":"Московская область","152":"Нижегородская область","154":"Новосибирская область",
+        "159":"Пермский край","161":"Ростовская область","163":"Самарская область",
+        "164":"Саратовская область","174":"Челябинская область","177":"Москва",
+        "178":"Санкт-Петербург","186":"ХМАО","190":"Московская область",
+        "193":"Краснодарский край","196":"Свердловская область","197":"Москва",
+        "198":"Санкт-Петербург","199":"Москва",
+    }
+    # Extract region from plate (last 2-3 digits)
+    region_match = re.search(r"(\d{2,3})$", plate)
+    if region_match:
+        reg = region_match.group(1)
+        region_name = region_codes.get(reg, f"Регион {reg}")
+        out["Регион"] = f"{reg} — {region_name}"
+    out["Формат"] = "Российский стандарт"
+    out["_links"] = [
+        ("ГИБДД",        f"https://xn--90adear.xn--p1ai/check/auto#{plate}"),
+        ("Автокод",      f"https://avtocod.ru/check-auto?query={plate}"),
+        ("Дром",         f"https://www.drom.ru/info/misc/license_plates.html"),
+        ("Авито авто",   f"https://www.avito.ru/rossiya/avtomobili?q={plate}"),
+        ("Google",       f"https://www.google.com/search?q=%22{urllib.parse.quote(plate)}%22"),
+        ("Yandex",       f"https://yandex.ru/search/?text=%22{urllib.parse.quote(plate)}%22"),
+        ("Auto.ru",      f"https://auto.ru/cars/used/?search_line={plate}"),
+        ("Carfax RU",    f"https://vinformer.su/car-search/#{plate}"),
+        ("РСА полис",    f"https://dkbm-web.autoins.ru/dkbm-web-1.0/bso.htm"),
+        ("Штрафы ГИБДД", f"https://xn--90adear.xn--p1ai/check/fines"),
+    ]
+    return out
+
+# ── NEW: VIN lookup ──────────────────────────────────────────────
+def lookup_vin(vin):
+    vin = vin.upper()
+    out = {"VIN": vin}
+    # Decode WMI (first 3 chars)
+    wmi_db = {
+        "XTA":"АвтоВАЗ (Лада)","XTT":"АвтоВАЗ","XKL":"КамАЗ","X4X":"УАЗ",
+        "X9F":"ГАЗ","XUF":"Урал","1HG":"Honda (США)","1G1":"Chevrolet (США)",
+        "1FA":"Ford (США)","JHM":"Honda (Япония)","JTD":"Toyota (Япония)",
+        "WBA":"BMW (Германия)","WDD":"Mercedes-Benz","WAU":"Audi",
+        "VF1":"Renault","ZFA":"Fiat","SAJ":"Jaguar","SAL":"Land Rover",
+        "YV1":"Volvo","WVW":"Volkswagen","TRU":"Audi (Венгрия)",
+    }
+    wmi = vin[:3]
+    out["Производитель"] = wmi_db.get(wmi, f"WMI: {wmi}")
+    out["Год выпуска (код)"] = vin[9]  # 10th char = year
+    year_codes = {
+        "A":1980,"B":1981,"C":1982,"D":1983,"E":1984,"F":1985,"G":1986,"H":1987,
+        "J":1988,"K":1989,"L":1990,"M":1991,"N":1992,"P":1993,"R":1994,"S":1995,
+        "T":1996,"V":1997,"W":1998,"X":1999,"Y":2000,"1":2001,"2":2002,"3":2003,
+        "4":2004,"5":2005,"6":2006,"7":2007,"8":2008,"9":2009,"A":2010,"B":2011,
+        "C":2012,"D":2013,"E":2014,"F":2015,"G":2016,"H":2017,"J":2018,"K":2019,
+        "L":2020,"M":2021,"N":2022,"P":2023,"R":2024,"S":2025,
+    }
+    year = year_codes.get(vin[9], "?")
+    out["Год выпуска"] = str(year)
+    out["Серийный номер"] = vin[11:]
+    out["_links"] = [
+        ("Автокод",     f"https://avtocod.ru/check-auto?query={vin}"),
+        ("NHTSA",       f"https://vpic.nhtsa.dot.gov/decoder/Decoder?VIN={vin}"),
+        ("VinDecoder",  f"https://www.vindecoder.net/{vin}"),
+        ("Carfax",      f"https://www.carfax.com/vehicle/{vin}"),
+        ("AutoDNA",     f"https://www.autodna.com/vin/{vin}"),
+        ("ГИБДД",       f"https://xn--90adear.xn--p1ai/check/auto#{vin}"),
+        ("Google",      f"https://www.google.com/search?q=%22{vin}%22"),
+    ]
+    return out
+
+# ── NEW: Crypto lookup ───────────────────────────────────────────
+def lookup_crypto(address, coin="btc"):
+    out = {"Адрес": address, "Сеть": coin.upper()}
+    if coin == "btc":
+        try:
+            r = requests.get(f"https://blockchain.info/rawaddr/{address}?limit=5", timeout=8).json()
+            out["Баланс"] = f"{r.get('final_balance', 0) / 1e8:.8f} BTC"
+            out["Транзакций"] = str(r.get("n_tx", 0))
+            out["Получено всего"] = f"{r.get('total_received', 0) / 1e8:.8f} BTC"
+            out["Отправлено всего"] = f"{r.get('total_sent', 0) / 1e8:.8f} BTC"
+        except: pass
+        out["_links"] = [
+            ("Blockchain.info", f"https://www.blockchain.com/explorer/addresses/btc/{address}"),
+            ("BlockCypher",     f"https://live.blockcypher.com/btc/address/{address}/"),
+            ("Blockchair",      f"https://blockchair.com/bitcoin/address/{address}"),
+            ("WalletExplorer",  f"https://www.walletexplorer.com/address/{address}"),
+            ("BitRef",          f"https://bitref.com/{address}"),
+            ("OXT",             f"https://oxt.me/address/{address}"),
+            ("Google",          f"https://www.google.com/search?q=%22{address}%22"),
+        ]
+    elif coin == "eth":
+        try:
+            r = requests.get(f"https://api.etherscan.io/api?module=account&action=balance&address={address}&tag=latest", timeout=8).json()
+            if r.get("status") == "1":
+                balance = int(r.get("result","0")) / 1e18
+                out["Баланс"] = f"{balance:.6f} ETH"
+        except: pass
+        out["_links"] = [
+            ("Etherscan",   f"https://etherscan.io/address/{address}"),
+            ("Ethplorer",   f"https://ethplorer.io/address/{address}"),
+            ("Blockchair",  f"https://blockchair.com/ethereum/address/{address}"),
+            ("Debank",      f"https://debank.com/profile/{address}"),
+            ("Zapper",      f"https://zapper.xyz/account/{address}"),
+            ("Google",      f"https://www.google.com/search?q=%22{address}%22"),
+        ]
+    return out
+
+# ── NEW: Yandex/Google image search links ────────────────────────
+def lookup_image_search(url_or_query):
+    """Generate reverse image search links"""
+    out = {"Запрос": url_or_query}
+    encoded = urllib.parse.quote(url_or_query)
+    out["_links"] = [
+        ("Google Images",  f"https://www.google.com/searchbyimage?image_url={encoded}"),
+        ("Yandex Images",  f"https://yandex.ru/images/search?url={encoded}&rpt=imageview"),
+        ("TinEye",         f"https://tineye.com/search?url={encoded}"),
+        ("Bing Visual",    f"https://www.bing.com/images/searchbyimage?imgurl={encoded}"),
+        ("Google Lens",    f"https://lens.google.com/uploadbyurl?url={encoded}"),
+    ]
+    return out
+
+
 
 def google_search(query, limit=10):
     url = "https://www.google.com/search?q=" + urllib.parse.quote(f'"{query}"') + "&hl=ru&num=10"
@@ -691,98 +854,162 @@ def build_dorks(query, qtype):
             ("Паспорт",      f'"{query}" паспорт OR родился OR дата рождения'),
             ("Все",          f'"{query}"'),
         ],
-    }
+        "car_plate": [
+            ("Авито",        f'site:avito.ru "{query}"'),
+            ("Дром",         f'site:drom.ru "{query}"'),
+            ("Google",       f'"{query}" автомобиль OR владелец OR ДТП OR авария'),
+            ("Угон",         f'"{query}" угон OR stolen OR розыск'),
+            ("Штрафы",       f'"{query}" штраф OR ГИБДД OR ПДД'),
+            ("Соцсети",      f'"{query}" site:vk.com OR site:ok.ru OR site:instagram.com'),
+        ],
+        "vin": [
+            ("ГИБДД",        f'"{query}" ГИБДД OR ПТС OR регистрация'),
+            ("Автокод",      f'site:avtocod.ru "{query}"'),
+            ("Google",       f'"{query}"'),
+            ("Аварии",       f'"{query}" ДТП OR авария OR accident'),
+        ],
+        "crypto_btc": [
+            ("Упоминания",   f'"{query}"'),
+            ("Darknet",      f'"{query}" site:onion.ly OR darkweb OR crypto'),
+            ("Scam",         f'"{query}" scam OR fraud OR мошенник'),
+            ("GitHub",       f'"{query}" site:github.com'),
+        ],
+        "crypto_eth": [
+            ("Упоминания",   f'"{query}"'),
+            ("NFT",          f'"{query}" NFT OR opensea OR token'),
+            ("Scam",         f'"{query}" scam OR fraud OR rug pull'),
+            ("GitHub",       f'"{query}" site:github.com'),
+        ],
     dorks_raw = base.get(qtype, [("Поиск", f'"{query}"')])
     return [{"name": n, "dork": d,
              "url": "https://www.google.com/search?q=" + urllib.parse.quote(d) + "&hl=ru"}
             for n, d in dorks_raw]
 
-# ── Sherlock 65+ platforms ───────────────────────────────────────
+# ── Sherlock — правильная проверка с уникальными паттернами ─────
+# Формат: (name, url_template, method, not_found_strings, extra_check)
+# method: "status" = проверка кода, "text" = поиск текста на странице
 SHERLOCK_SITES = [
-    ("GitHub","https://github.com/{u}",200),
-    ("GitLab","https://gitlab.com/{u}",200),
-    ("Reddit","https://www.reddit.com/user/{u}",200),
-    ("Twitter/X","https://twitter.com/{u}",200),
-    ("Instagram","https://www.instagram.com/{u}/",200),
-    ("TikTok","https://www.tiktok.com/@{u}",200),
-    ("Pinterest","https://www.pinterest.com/{u}/",200),
-    ("Twitch","https://www.twitch.tv/{u}",200),
-    ("YouTube","https://www.youtube.com/@{u}",200),
-    ("SoundCloud","https://soundcloud.com/{u}",200),
-    ("Steam","https://steamcommunity.com/id/{u}",200),
-    ("Telegram","https://t.me/{u}",200),
-    ("VKontakte","https://vk.com/{u}",200),
-    ("OK.ru","https://ok.ru/{u}",200),
-    ("LinkedIn","https://www.linkedin.com/in/{u}/",200),
-    ("Medium","https://medium.com/@{u}",200),
-    ("Dev.to","https://dev.to/{u}",200),
-    ("Pastebin","https://pastebin.com/u/{u}",200),
-    ("HackerNews","https://news.ycombinator.com/user?id={u}",200),
-    ("Behance","https://www.behance.net/{u}",200),
-    ("Dribbble","https://dribbble.com/{u}",200),
-    ("Flickr","https://www.flickr.com/people/{u}/",200),
-    ("Keybase","https://keybase.io/{u}",200),
-    ("Replit","https://replit.com/@{u}",200),
-    ("Codepen","https://codepen.io/{u}",200),
-    ("PyPI","https://pypi.org/user/{u}/",200),
-    ("Letterboxd","https://letterboxd.com/{u}/",200),
-    ("Last.fm","https://www.last.fm/user/{u}",200),
-    ("Chess.com","https://www.chess.com/member/{u}",200),
-    ("Lichess","https://lichess.org/@/{u}",200),
-    ("Kick","https://kick.com/{u}",200),
-    ("Lolzteam","https://lolz.live/{u}/",200),
-    ("Habr","https://habr.com/ru/users/{u}/",200),
-    ("Pikabu","https://pikabu.ru/@{u}",200),
-    ("VC.ru","https://vc.ru/u/{u}",200),
-    ("About.me","https://about.me/{u}",200),
-    ("Npmjs","https://www.npmjs.com/~{u}",200),
-    ("Duolingo","https://www.duolingo.com/profile/{u}",200),
-    ("ProductHunt","https://www.producthunt.com/@{u}",200),
-    ("Spotify","https://open.spotify.com/user/{u}",200),
-    ("Tumblr","https://{u}.tumblr.com",200),
-    ("WordPress","https://{u}.wordpress.com",200),
-    ("Gitea","https://gitea.com/{u}",200),
-    ("Goodreads","https://www.goodreads.com/{u}",200),
-    ("Imgur","https://imgur.com/user/{u}",200),
-    ("HackerOne","https://hackerone.com/{u}",200),
-    ("Bugcrowd","https://bugcrowd.com/{u}",200),
-    ("Bitbucket","https://bitbucket.org/{u}/",200),
-    ("Mastodon","https://mastodon.social/@{u}",200),
-    ("Bluesky","https://bsky.app/profile/{u}.bsky.social",200),
-    ("Substack","https://{u}.substack.com",200),
-    ("Vimeo","https://vimeo.com/{u}",200),
-    ("Wattpad","https://www.wattpad.com/user/{u}",200),
-    ("Disqus","https://disqus.com/by/{u}/",200),
-    ("Snapchat","https://www.snapchat.com/add/{u}",200),
-    ("Gravatar","https://gravatar.com/{u}",200),
-    ("Rumble","https://rumble.com/c/{u}",200),
-    ("Dailymotion","https://www.dailymotion.com/{u}",200),
-    ("Fiverr","https://www.fiverr.com/{u}",200),
-    ("Freelancer","https://www.freelancer.com/u/{u}",200),
-    ("ArtStation","https://www.artstation.com/{u}",200),
-    ("Deviantart","https://www.deviantart.com/{u}",200),
-    ("Trello","https://trello.com/{u}",200),
-    ("Avito","https://www.avito.ru/profile/{u}",200),
-    ("MyMail","https://my.mail.ru/{u}/",200),
+    # name, url, expected_status, NOT_FOUND_texts (если найден хоть один — профиля нет)
+    ("GitHub",      "https://github.com/{u}",                      200, ["Not Found","This is not the web page"]),
+    ("GitLab",      "https://gitlab.com/{u}",                      200, ["404","not found","page doesn't exist"]),
+    ("Reddit",      "https://www.reddit.com/user/{u}/about.json",  200, ["USER_DOESNT_EXIST","NOT_FOUND","suspended"]),
+    ("Twitter/X",   "https://twitter.com/{u}",                     200, ["This account doesn't exist","page doesn't exist"]),
+    ("Instagram",   "https://www.instagram.com/{u}/",              200, ["Sorry, this page","Page Not Found","isn't available"]),
+    ("TikTok",      "https://www.tiktok.com/@{u}",                 200, ["Couldn't find this account","not available"]),
+    ("Pinterest",   "https://www.pinterest.com/{u}/",              200, ["Sorry! We couldn't find","Oops! We can't find"]),
+    ("Twitch",      "https://www.twitch.tv/{u}",                   200, ["Sorry. Unless you","page not found"]),
+    ("YouTube",     "https://www.youtube.com/@{u}",                200, ["This page isn't available","404"]),
+    ("SoundCloud",  "https://soundcloud.com/{u}",                  200, ["Sorry! We can't find","page not found"]),
+    ("Steam",       "https://steamcommunity.com/id/{u}",           200, ["The specified profile could not be found","error"]),
+    ("Telegram",    "https://t.me/{u}",                            200, ["If you have Telegram","tgme_page_ph"]),
+    ("VKontakte",   "https://vk.com/{u}",                          200, ["has left","DELETED","page isn't available","404"]),
+    ("OK.ru",       "https://ok.ru/{u}",                           200, ["Страница не найдена","page not found"]),
+    ("LinkedIn",    "https://www.linkedin.com/in/{u}/",            200, ["Page not found","profile not found"]),
+    ("Medium",      "https://medium.com/@{u}",                     200, ["Page not found","404"]),
+    ("Dev.to",      "https://dev.to/{u}",                          200, ["Page not found","404 not found"]),
+    ("Pastebin",    "https://pastebin.com/u/{u}",                  200, ["No pastes found","Not Found"]),
+    ("HackerNews",  "https://news.ycombinator.com/user?id={u}",    200, ["No such user","error"]),
+    ("Behance",     "https://www.behance.net/{u}",                 200, ["Page Not Found","isn't available"]),
+    ("Dribbble",    "https://dribbble.com/{u}",                    200, ["Whoops, that page is gone","404"]),
+    ("Keybase",     "https://keybase.io/{u}",                      200, ["user not found","404"]),
+    ("Replit",      "https://replit.com/@{u}",                     200, ["not found","404"]),
+    ("Codepen",     "https://codepen.io/{u}",                      200, ["404","not found"]),
+    ("PyPI",        "https://pypi.org/user/{u}/",                  200, ["404","not found"]),
+    ("Letterboxd",  "https://letterboxd.com/{u}/",                 200, ["Sorry, we can't find","404"]),
+    ("Last.fm",     "https://www.last.fm/user/{u}",                200, ["User not found","404"]),
+    ("Chess.com",   "https://www.chess.com/member/{u}",            200, ["Oops! Page Not Found","404"]),
+    ("Lichess",     "https://lichess.org/@/{u}",                   200, ["404","not found"]),
+    ("Kick",        "https://kick.com/{u}",                        200, ["404","not found"]),
+    ("Lolzteam",    "https://lolz.live/{u}/",                      200, ["Пользователь не найден","user not found","404"]),
+    ("Habr",        "https://habr.com/ru/users/{u}/",              200, ["Пользователь не найден","404"]),
+    ("Pikabu",      "https://pikabu.ru/@{u}",                      200, ["Пользователь не найден","404"]),
+    ("VC.ru",       "https://vc.ru/u/{u}",                         200, ["Пользователь не найден","404"]),
+    ("Npmjs",       "https://www.npmjs.com/~{u}",                  200, ["404","not found","User Not Found"]),
+    ("Duolingo",    "https://www.duolingo.com/profile/{u}",        200, ["hasn't learned","Page not found","404"]),
+    ("ProductHunt", "https://www.producthunt.com/@{u}",            200, ["404","not found"]),
+    ("Tumblr",      "https://{u}.tumblr.com",                      200, ["There's nothing here","not found"]),
+    ("WordPress",   "https://{u}.wordpress.com",                   200, ["doesn't exist","not found"]),
+    ("Gitea",       "https://gitea.com/{u}",                       200, ["user does not exist","404"]),
+    ("Goodreads",   "https://www.goodreads.com/{u}",               200, ["Page not found","404"]),
+    ("Imgur",       "https://imgur.com/user/{u}",                  200, ["user not found","404"]),
+    ("HackerOne",   "https://hackerone.com/{u}",                   200, ["Page not found","404"]),
+    ("Bugcrowd",    "https://bugcrowd.com/{u}",                    200, ["404","not found"]),
+    ("Bitbucket",   "https://bitbucket.org/{u}/",                  200, ["404","not found"]),
+    ("Mastodon",    "https://mastodon.social/@{u}",                200, ["not found","404"]),
+    ("Bluesky",     "https://bsky.app/profile/{u}.bsky.social",    200, ["not found","404"]),
+    ("Substack",    "https://{u}.substack.com",                    200, ["not found","404"]),
+    ("Vimeo",       "https://vimeo.com/{u}",                       200, ["not found","404","Sorry"]),
+    ("Wattpad",     "https://www.wattpad.com/user/{u}",            200, ["not found","404"]),
+    ("Disqus",      "https://disqus.com/by/{u}/",                  200, ["not found","404"]),
+    ("Snapchat",    "https://www.snapchat.com/add/{u}",            200, ["not found","Hmm"]),
+    ("Rumble",      "https://rumble.com/c/{u}",                    200, ["not found","404"]),
+    ("Vimeo",       "https://vimeo.com/{u}",                       200, ["not found","404"]),
+    ("Fiverr",      "https://www.fiverr.com/{u}",                  200, ["not found","404","Page not found"]),
+    ("Freelancer",  "https://www.freelancer.com/u/{u}",            200, ["not found","404"]),
+    ("ArtStation",  "https://www.artstation.com/{u}",              200, ["not found","404"]),
+    ("Deviantart",  "https://www.deviantart.com/{u}",              200, ["not found","404","deviantART"]),
+    ("Avito",       "https://www.avito.ru/profile/{u}",            200, ["Страница не найдена","404"]),
+    ("MyMail",      "https://my.mail.ru/{u}/",                     200, ["не существует","not found","404"]),
+    ("Flickr",      "https://www.flickr.com/people/{u}/",          200, ["Page Not Found","404"]),
+    ("About.me",    "https://about.me/{u}",                        200, ["Oops","not found","404"]),
+    ("Gravatar",    "https://en.gravatar.com/{u}",                 200, ["GRAVATAR_404","not found"]),
+    ("Trello",      "https://trello.com/{u}",                      200, ["not found","404"]),
+    ("Spotify",     "https://open.spotify.com/user/{u}",           200, ["not found","404"]),
+    ("SoundCloud",  "https://soundcloud.com/{u}",                  200, ["not found","404"]),
 ]
+# Remove duplicates by name
+_seen = set()
+SHERLOCK_SITES = [s for s in SHERLOCK_SITES if s[0] not in _seen and not _seen.add(s[0])]
 
-def _check_one(u, name, tpl, code):
+def _check_one(u, name, tpl, code, not_found_texts):
     url = tpl.replace("{u}", urllib.parse.quote(u))
     try:
-        r = requests.get(url, headers=HEADERS, timeout=7, allow_redirects=True)
-        found = r.status_code == code
-        bad = ["not found","user not found","doesn't exist","page not found","пользователь не найден","404","this user does not exist"]
-        if found and any(x in r.text.lower() for x in bad): found = False
-        return {"name": name, "url": url, "found": found}
+        r = requests.get(url, headers={
+            **HEADERS,
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+        }, timeout=8, allow_redirects=True)
+
+        # Basic status check
+        if r.status_code == 404:
+            return {"name": name, "url": url, "found": False}
+        if r.status_code != code:
+            return {"name": name, "url": url, "found": None}
+
+        # Content check — look for NOT FOUND markers
+        body = r.text.lower()
+        for marker in not_found_texts:
+            if marker.lower() in body:
+                return {"name": name, "url": url, "found": False}
+
+        # Extra: check page is not empty / redirect to home
+        if len(r.text) < 500:
+            return {"name": name, "url": url, "found": False}
+
+        # Reddit special: check JSON
+        if "reddit.com" in url and "about.json" in url:
+            try:
+                data = r.json()
+                if data.get("error") or not data.get("data"):
+                    return {"name": name, "url": url.replace("/about.json",""), "found": False}
+                return {"name": name, "url": url.replace("/about.json",""), "found": True}
+            except:
+                return {"name": name, "url": url.replace("/about.json",""), "found": False}
+
+        return {"name": name, "url": url, "found": True}
     except:
         return {"name": name, "url": url, "found": None}
 
 def sherlock_check(username):
+    # Skip obviously invalid usernames
+    if len(username) < 2 or len(username) > 50:
+        return []
     results = []
-    with ThreadPoolExecutor(max_workers=25) as ex:
-        futs = {ex.submit(_check_one, username, n, t, c): n for n,t,c in SHERLOCK_SITES}
-        for f in as_completed(futs): results.append(f.result())
-    results.sort(key=lambda x:(0 if x["found"] else(2 if x["found"] is None else 1), x["name"]))
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        futs = {ex.submit(_check_one, username, n, t, c, nf): n
+                for n, t, c, nf in SHERLOCK_SITES}
+        for f in as_completed(futs):
+            results.append(f.result())
+    results.sort(key=lambda x: (0 if x["found"] else (2 if x["found"] is None else 1), x["name"]))
     return results
 
 def shodan_lookup(ip):
@@ -1267,6 +1494,10 @@ def index():
                 ctx["sherlock_results"] = sherlock_check(q)
             elif qtype == "fullname":  ctx["lookup_data"] = lookup_fullname(q)
             elif qtype == "birthday":  ctx["lookup_data"] = lookup_birthday(q)
+            elif qtype == "car_plate": ctx["lookup_data"] = lookup_car_plate(q)
+            elif qtype == "vin":       ctx["lookup_data"] = lookup_vin(q)
+            elif qtype == "crypto_btc":ctx["lookup_data"] = lookup_crypto(q, "btc")
+            elif qtype == "crypto_eth":ctx["lookup_data"] = lookup_crypto(q, "eth")
 
             ctx["google_results"] = google_search(q)
             ctx["dorks"]          = build_dorks(q, qtype)
