@@ -880,6 +880,7 @@ def build_dorks(query, qtype):
             ("Scam",         f'"{query}" scam OR fraud OR rug pull'),
             ("GitHub",       f'"{query}" site:github.com'),
         ],
+    }
     dorks_raw = base.get(qtype, [("Поиск", f'"{query}"')])
     return [{"name": n, "dork": d,
              "url": "https://www.google.com/search?q=" + urllib.parse.quote(d) + "&hl=ru"}
@@ -1856,7 +1857,7 @@ def not_found(e):
 def server_error(e):
     return render_template("500.html", sitename=SITE_NAME, tiktok_url=TIKTOK_URL, author=AUTHOR), 500
 
-# ── Инициализация БД при запуске (работает и с gunicorn, и напрямую) ──
+# ── Инициализация БД (работает и с gunicorn, и напрямую) ────────
 init_db()
 
 if __name__ == "__main__":
