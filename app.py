@@ -880,7 +880,6 @@ def build_dorks(query, qtype):
             ("Scam",         f'"{query}" scam OR fraud OR rug pull'),
             ("GitHub",       f'"{query}" site:github.com'),
         ],
-    }
     dorks_raw = base.get(qtype, [("Поиск", f'"{query}"')])
     return [{"name": n, "dork": d,
              "url": "https://www.google.com/search?q=" + urllib.parse.quote(d) + "&hl=ru"}
@@ -1136,37 +1135,144 @@ def lookup_phone(phone):
     digits = re.sub(r"\D","",phone)
     if len(digits)==10: digits = "7"+digits
     out = {"Номер": f"+{digits}"}
+
+    # ── Basic info ───────────────────────────────────────────────
     try:
-        d = requests.get(f"https://api.numlookup.com/?q=+{digits}&type=json", headers=HEADERS, timeout=8).json()
-        out["Страна"] = d.get("country_name","") or d.get("country","")
-        out["Код страны"] = d.get("country_code","")
+        d = requests.get(f"https://api.numlookup.com/?q=+{digits}&type=json",
+                         headers=HEADERS, timeout=8).json()
+        out["Страна"]           = d.get("country_name","") or d.get("country","")
+        out["Код страны"]       = d.get("country_code","")
         out["Локальный формат"] = d.get("local_format","")
-        out["Оператор"] = d.get("carrier",""); out["Тип линии"] = d.get("line_type","")
-        out["Валидный"] = "Да" if d.get("valid") else "Нет"
+        out["Оператор"]         = d.get("carrier","")
+        out["Тип линии"]        = d.get("line_type","")
+        out["Валидный"]         = "✅ Да" if d.get("valid") else "✗ Нет"
     except: pass
+
+    # ── Telegram: check if number has account ────────────────────
+    # Telegram shows a page for t.me/+PHONE if account exists
+    try:
+        r = requests.get(f"https://t.me/+{digits}",
+                         headers=HEADERS, timeout=7)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, "html.parser")
+            title = soup.find("div", class_="tgme_page_title")
+            desc  = soup.find("div", class_="tgme_page_description")
+            if title and title.get_text(strip=True):
+                out["Telegram имя"]   = title.get_text(strip=True)
+                out["Telegram статус"]= "✅ Аккаунт найден"
+                if desc: out["Telegram bio"] = desc.get_text(strip=True)[:100]
+            else:
+                out["Telegram статус"] = "✗ Не найден"
+        else:
+            out["Telegram статус"] = "✗ Не найден"
+    except: pass
+
+    # ── WhatsApp: check via wa.me ────────────────────────────────
+    try:
+        r = requests.get(f"https://wa.me/{digits}",
+                         headers=HEADERS, timeout=7)
+        # wa.me redirects to app if number exists, stays on page if not
+        if r.status_code == 200 and "api.whatsapp.com" in r.url:
+            out["WhatsApp статус"] = "✅ Номер зарегистрирован"
+        elif r.status_code == 200:
+            out["WhatsApp статус"] = "⚠ Проверь вручную"
+    except: pass
+
+    # ── VK: search by phone ──────────────────────────────────────
+    try:
+        # VK public search
+        r = requests.get(
+            f"https://vk.com/search?c[q]=%2B{digits}&c[section]=people",
+            headers=HEADERS, timeout=8
+        )
+        soup = BeautifulSoup(r.text, "html.parser")
+        profiles = soup.select("a.search_item__link")[:3]
+        if profiles:
+            names = []
+            for p in profiles:
+                href = p.get("href","")
+                name = p.get_text(strip=True)
+                if href and name:
+                    names.append(f"{name} → vk.com{href}")
+            if names:
+                out["VK профили"] = " | ".join(names[:2])
+                out["VK статус"]  = f"✅ Найдено {len(profiles)} профилей"
+        else:
+            out["VK статус"] = "✗ Не найден"
+    except: pass
+
+    # ── Gravatar by phone MD5 ────────────────────────────────────
     try:
         md5 = hashlib.md5(f"+{digits}".encode()).hexdigest()
         g = requests.get(f"https://www.gravatar.com/{md5}.json", timeout=5).json()
         if "entry" in g:
             e = g["entry"][0]
-            out["Gravatar имя"] = e.get("displayName","")
+            out["Gravatar имя"]      = e.get("displayName","")
             out["Gravatar username"] = e.get("preferredUsername","")
             accs = [a.get("shortname","") for a in e.get("accounts",[])]
             if accs: out["Gravatar аккаунты"] = ", ".join(accs)
+            out["Gravatar статус"] = "✅ Профиль найден"
     except: pass
+
+    # ── Viber: check via public invite link ──────────────────────
+    try:
+        r = requests.get(
+            f"https://invite.viber.com/?g2=AAAA&number={digits}",
+            headers=HEADERS, timeout=6
+        )
+        if r.status_code == 200 and "viber" in r.text.lower():
+            out["Viber"] = "⚠ Проверь вручную"
+    except: pass
+
+    # ── Google/Yandex index check ────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://www.google.com/search?q=%22%2B{digits}%22",
+            headers=HEADERS, timeout=10
+        )
+        soup = BeautifulSoup(r.text, "html.parser")
+        hits = soup.select("div.g")
+        if hits:
+            out["Google упоминания"] = f"✅ {len(hits)} результатов"
+            # Try to extract first result
+            first = hits[0]
+            h3 = first.find("h3")
+            if h3: out["Google топ результат"] = h3.get_text()[:80]
+        else:
+            out["Google упоминания"] = "✗ Не найден"
+    except: pass
+
+    # ── Avito search ─────────────────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://www.avito.ru/all?q=%2B{digits}",
+            headers=HEADERS, timeout=8
+        )
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("[data-marker='item']")
+        if items:
+            out["Авито объявления"] = f"✅ {len(items)} объявлений"
+        else:
+            out["Авито"] = "✗ Не найдено"
+    except: pass
+
+    out["_social_check"] = True  # flag for template to show social section
     out["_links"] = [
-        ("GetContact",f"https://getcontact.com/en/search?q=%2B{digits}"),
-        ("TrueCaller",f"https://www.truecaller.com/search/ru/{digits}"),
-        ("NumLookup",f"https://www.numlookup.com/?q=%2B{digits}"),
-        ("SpamCalls",f"https://spamcalls.net/ru/phone/{digits}"),
-        ("Avito",f"https://www.avito.ru/all?q=%2B{digits}"),
-        ("Google",f"https://www.google.com/search?q=%22%2B{digits}%22"),
-        ("Yandex",f"https://yandex.ru/search/?text=%22%2B{digits}%22"),
-        ("VK",f"https://vk.com/search?c[q]=%2B{digits}&c[section]=people"),
-        ("Telegram",f"https://t.me/+{digits}"),
-        ("WhatsApp",f"https://wa.me/{digits}"),
-        ("2GIS",f"https://2gis.ru/search/%2B{digits}"),
-        ("Viber",f"viber://contact?number=%2B{digits}"),
+        ("GetContact",  f"https://getcontact.com/en/search?q=%2B{digits}"),
+        ("TrueCaller",  f"https://www.truecaller.com/search/ru/{digits}"),
+        ("NumLookup",   f"https://www.numlookup.com/?q=%2B{digits}"),
+        ("Epieos",      f"https://epieos.com/?q=%2B{digits}&t=phone"),
+        ("SpamCalls",   f"https://spamcalls.net/ru/phone/{digits}"),
+        ("Авито",       f"https://www.avito.ru/all?q=%2B{digits}"),
+        ("Google",      f"https://www.google.com/search?q=%22%2B{digits}%22"),
+        ("Yandex",      f"https://yandex.ru/search/?text=%22%2B{digits}%22"),
+        ("VK",          f"https://vk.com/search?c[q]=%2B{digits}&c[section]=people"),
+        ("Telegram",    f"https://t.me/+{digits}"),
+        ("WhatsApp",    f"https://wa.me/{digits}"),
+        ("2GIS",        f"https://2gis.ru/search/%2B{digits}"),
+        ("Viber",       f"viber://contact?number=%2B{digits}"),
+        ("OKru",        f"https://ok.ru/search?query=%2B{digits}"),
+        ("Skype",       f"https://www.skype.com/en/"),
     ]
     return out
 
@@ -1207,21 +1313,141 @@ def lookup_email(email):
     return out
 
 def lookup_username(username):
+    """Deep username lookup via public APIs only."""
     out = {}
+
+    # ── GitHub API (public) ──────────────────────────────────────
     try:
-        gh = requests.get(f"https://api.github.com/users/{urllib.parse.quote(username)}", timeout=8).json()
+        gh = requests.get(
+            f"https://api.github.com/users/{urllib.parse.quote(username)}",
+            headers={"Accept": "application/vnd.github.v3+json"}, timeout=8
+        ).json()
         if "login" in gh:
-            out["GitHub имя"] = gh.get("name","") or "—"
-            out["GitHub email"] = gh.get("email","") or "скрыт"
-            out["GitHub bio"] = (gh.get("bio","") or "")[:100]
-            out["GitHub компания"] = gh.get("company","") or "—"
-            out["GitHub локация"] = gh.get("location","") or "—"
-            out["GitHub сайт"] = gh.get("blog","") or "—"
-            out["GitHub репо"] = str(gh.get("public_repos",0))
+            out["GitHub имя"]       = gh.get("name","") or "—"
+            out["GitHub email"]     = gh.get("email","") or "скрыт"
+            out["GitHub bio"]       = (gh.get("bio","") or "")[:100]
+            out["GitHub компания"]  = gh.get("company","") or "—"
+            out["GitHub локация"]   = gh.get("location","") or "—"
+            out["GitHub сайт"]      = gh.get("blog","") or "—"
+            out["GitHub репо"]      = str(gh.get("public_repos",0))
             out["GitHub followers"] = str(gh.get("followers",0))
-            out["GitHub создан"] = str(gh.get("created_at",""))[:10]
-            out["GitHub аватар"] = gh.get("avatar_url","")
+            out["GitHub создан"]    = str(gh.get("created_at",""))[:10]
+            out["GitHub аватар"]    = gh.get("avatar_url","")
+            out["GitHub Twitter"]   = gh.get("twitter_username","") or "—"
     except: pass
+
+    # ── Telegram (public API — check if username exists) ─────────
+    try:
+        r = requests.get(f"https://t.me/{username}", headers=HEADERS, timeout=7)
+        if r.status_code == 200 and "tgme_page_title" in r.text:
+            soup = BeautifulSoup(r.text, "html.parser")
+            title = soup.find("div", class_="tgme_page_title")
+            desc  = soup.find("div", class_="tgme_page_description")
+            extra = soup.find("div", class_="tgme_page_extra")
+            if title:
+                out["Telegram имя"] = title.get_text(strip=True)
+            if desc:
+                out["Telegram bio"] = desc.get_text(strip=True)[:150]
+            if extra:
+                out["Telegram подписчики"] = extra.get_text(strip=True)
+            out["Telegram статус"] = "✅ Аккаунт найден"
+        else:
+            out["Telegram статус"] = "✗ Не найден"
+    except: pass
+
+    # ── TikTok (public page) ─────────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://www.tiktok.com/@{username}",
+            headers={**HEADERS, "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"},
+            timeout=8
+        )
+        if r.status_code == 200 and "uniqueId" in r.text:
+            # Extract from JSON in page
+            match = re.search(r'"uniqueId":"([^"]+)"', r.text)
+            name_match = re.search(r'"nickname":"([^"]+)"', r.text)
+            bio_match  = re.search(r'"signature":"([^"]+)"', r.text)
+            fans_match = re.search(r'"followerCount":(\d+)', r.text)
+            likes_match= re.search(r'"heartCount":(\d+)', r.text)
+            if match:   out["TikTok username"] = match.group(1)
+            if name_match: out["TikTok имя"] = name_match.group(1)
+            if bio_match and bio_match.group(1): out["TikTok bio"] = bio_match.group(1)[:150]
+            if fans_match:  out["TikTok подписчики"] = f"{int(fans_match.group(1)):,}"
+            if likes_match: out["TikTok лайки"] = f"{int(likes_match.group(1)):,}"
+            out["TikTok статус"] = "✅ Найден"
+        else:
+            out["TikTok статус"] = "✗ Не найден"
+    except: pass
+
+    # ── VK (public API — search by username) ────────────────────
+    try:
+        vk_r = requests.get(
+            f"https://vk.com/{username}",
+            headers=HEADERS, timeout=8
+        )
+        if vk_r.status_code == 200 and "page_not_found" not in vk_r.text:
+            # Try to extract public info
+            name_m = re.search(r'<title>([^<]+)</title>', vk_r.text)
+            if name_m and "ВКонтакте" in name_m.group(1):
+                vk_name = name_m.group(1).replace("| ВКонтакте","").strip()
+                out["VK имя"] = vk_name
+            out["VK статус"] = "✅ Страница найдена"
+        else:
+            out["VK статус"] = "✗ Не найдена"
+    except: pass
+
+    # ── Reddit (public JSON API) ─────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://www.reddit.com/user/{username}/about.json",
+            headers={**HEADERS, "User-Agent": "osint-tool/1.0"}, timeout=8
+        ).json()
+        data = r.get("data", {})
+        if data and not r.get("error"):
+            out["Reddit имя"]      = data.get("name","")
+            out["Reddit карма"]    = str(data.get("total_karma",0))
+            out["Reddit аккаунт"]  = "✅ Найден"
+            created = data.get("created_utc",0)
+            if created:
+                out["Reddit создан"] = datetime.fromtimestamp(created).strftime("%Y-%m-%d")
+            if data.get("icon_img"):
+                out["Reddit аватар"] = data["icon_img"].split("?")[0]
+    except: pass
+
+    # ── Steam (public XML API) ───────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://steamcommunity.com/id/{username}/?xml=1",
+            headers=HEADERS, timeout=8
+        )
+        if r.status_code == 200 and "<steamID64>" in r.text:
+            steam_id = re.search(r"<steamID64>(\d+)</steamID64>", r.text)
+            steam_name = re.search(r"<steamID><!\\[CDATA\\[([^]]+)\\]\\]></steamID>", r.text) or \
+                         re.search(r"<steamID>([^<]+)</steamID>", r.text)
+            location = re.search(r"<location>([^<]+)</location>", r.text)
+            real_name = re.search(r"<realname><!\\[CDATA\\[([^]]+)\\]\\]></realname>", r.text) or \
+                        re.search(r"<realname>([^<]+)</realname>", r.text)
+            if steam_id:   out["Steam ID64"] = steam_id.group(1)
+            if steam_name: out["Steam ник"] = steam_name.group(1)
+            if real_name:  out["Steam реальное имя"] = real_name.group(1)
+            if location:   out["Steam локация"] = location.group(1)
+            out["Steam статус"] = "✅ Найден"
+    except: pass
+
+    # ── HackerNews (public API) ──────────────────────────────────
+    try:
+        r = requests.get(
+            f"https://hacker-news.firebaseio.com/v0/user/{username}.json",
+            timeout=7
+        ).json()
+        if r and r.get("id"):
+            out["HN карма"]   = str(r.get("karma",0))
+            out["HN создан"]  = datetime.fromtimestamp(r.get("created",0)).strftime("%Y-%m-%d")
+            out["HN о себе"]  = re.sub(r"<[^>]+>","", r.get("about",""))[:100]
+            out["HN статус"]  = "✅ Найден"
+    except: pass
+
+    # ── Gravatar ─────────────────────────────────────────────────
     try:
         md5 = hashlib.md5(username.lower().encode()).hexdigest()
         g = requests.get(f"https://www.gravatar.com/{md5}.json", timeout=5).json()
@@ -1231,14 +1457,23 @@ def lookup_username(username):
             accs = [a.get("shortname","") for a in e.get("accounts",[])]
             if accs: out["Gravatar аккаунты"] = ", ".join(accs)
     except: pass
+
     out["_links"] = [
-        ("GitHub",f"https://github.com/{username}"),("VK",f"https://vk.com/{username}"),
-        ("Telegram",f"https://t.me/{username}"),("Instagram",f"https://instagram.com/{username}"),
-        ("TikTok",f"https://tiktok.com/@{username}"),("Twitter/X",f"https://twitter.com/{username}"),
-        ("Reddit",f"https://reddit.com/user/{username}"),("YouTube",f"https://youtube.com/@{username}"),
-        ("Steam",f"https://steamcommunity.com/id/{username}"),("Twitch",f"https://twitch.tv/{username}"),
-        ("Lolzteam",f"https://lolz.live/{username}/"),("Habr",f"https://habr.com/ru/users/{username}/"),
-        ("Pinterest",f"https://pinterest.com/{username}/"),("Snapchat",f"https://snapchat.com/add/{username}"),
+        ("GitHub",    f"https://github.com/{username}"),
+        ("VK",        f"https://vk.com/{username}"),
+        ("Telegram",  f"https://t.me/{username}"),
+        ("TikTok",    f"https://tiktok.com/@{username}"),
+        ("Instagram", f"https://instagram.com/{username}"),
+        ("Twitter/X", f"https://twitter.com/{username}"),
+        ("Reddit",    f"https://reddit.com/user/{username}"),
+        ("YouTube",   f"https://youtube.com/@{username}"),
+        ("Steam",     f"https://steamcommunity.com/id/{username}"),
+        ("Twitch",    f"https://twitch.tv/{username}"),
+        ("Lolzteam",  f"https://lolz.live/{username}/"),
+        ("Habr",      f"https://habr.com/ru/users/{username}/"),
+        ("Pinterest", f"https://pinterest.com/{username}/"),
+        ("Snapchat",  f"https://snapchat.com/add/{username}"),
+        ("Bluesky",   f"https://bsky.app/profile/{username}.bsky.social"),
     ]
     return out
 
@@ -1857,13 +2092,11 @@ def not_found(e):
 def server_error(e):
     return render_template("500.html", sitename=SITE_NAME, tiktok_url=TIKTOK_URL, author=AUTHOR), 500
 
-# ── Инициализация БД (работает и с gunicorn, и напрямую) ────────
-init_db()
-
 if __name__ == "__main__":
+    init_db()
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ◈ {SITE_NAME} v2.0")
     print(f"  ◈ http://localhost:{port}")
     print(f"  ◈ Admin: {ADMIN_EMAIL} / {ADMIN_PASS}")
-    print(f"  ◈ AI: {'✓ ACTIVE' if GROQ_API_KEY else '✗ No key (add GROQ_API_KEY)'}\n")
+    print(f"  ◈ AI: {'✓ ACTIVE' if ANTHROPIC_KEY else '✗ No key (add ANTHROPIC_API_KEY)'}\n")
     app.run(host="0.0.0.0", port=port, debug=False)
