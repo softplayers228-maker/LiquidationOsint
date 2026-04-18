@@ -880,6 +880,7 @@ def build_dorks(query, qtype):
             ("Scam",         f'"{query}" scam OR fraud OR rug pull'),
             ("GitHub",       f'"{query}" site:github.com'),
         ],
+    }
     dorks_raw = base.get(qtype, [("Поиск", f'"{query}"')])
     return [{"name": n, "dork": d,
              "url": "https://www.google.com/search?q=" + urllib.parse.quote(d) + "&hl=ru"}
